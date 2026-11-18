@@ -163,7 +163,8 @@ fn run(args: &[String]) -> Result<i32> {
             let version = get("--version").ok_or_else(|| anyhow!("--version is required"))?;
             let url = get("--url").ok_or_else(|| anyhow!("--url is required"))?;
             let notes = match get("--notes") {
-                Some(p) => std::fs::read_to_string(p)?,
+                // Windows PowerShell writes UTF-8 with a byte order mark
+                Some(p) => std::fs::read_to_string(p)?.trim_start_matches('\u{feff}').to_string(),
                 None => String::new(),
             };
             let platform = get("--platform").unwrap_or_else(crate::update::platform_key);
