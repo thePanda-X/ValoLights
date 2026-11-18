@@ -19,8 +19,8 @@ rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 sha1 = "0.10.6"
-vl-core = { version = "0.2.0", path = "../vl-core" }
-vl-engine = { version = "0.2.0", path = "../vl-engine" }
+vl-core = { version = "0.3.0", path = "../vl-core" }
+vl-engine = { version = "0.3.0", path = "../vl-engine" }
 
 [dev-dependencies]
 tempfile = "3.23.0"

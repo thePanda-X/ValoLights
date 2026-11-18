@@ -6,6 +6,8 @@ All notable changes to ValoLights are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
 ### Added
 
 - Layout → Between cuts: a **Length** slider for transitions (0.1 to 2 s, 0.35 s as before by default).

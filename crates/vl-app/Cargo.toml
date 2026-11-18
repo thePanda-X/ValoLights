@@ -33,9 +33,9 @@ serde_json = "1.0.154"
 sha2 = "0.10.9"
 ureq = "3.5.2"
 uuid = { version = "1.29.3", features = ["v4"] }
-vl-core = { version = "0.2.0", path = "../vl-core" }
-vl-engine = { version = "0.2.0", path = "../vl-engine" }
-vl-render = { version = "0.2.0", path = "../vl-render" }
+vl-core = { version = "0.3.0", path = "../vl-core" }
+vl-engine = { version = "0.3.0", path = "../vl-engine" }
+vl-render = { version = "0.3.0", path = "../vl-render" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59.0", features = ["Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

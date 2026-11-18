@@ -3414,7 +3414,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vl-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -3446,7 +3446,7 @@ dependencies = [
 
 [[package]]
 name = "vl-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3463,7 +3463,7 @@ dependencies = [
 
 [[package]]
 name = "vl-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "log",
@@ -3476,7 +3476,7 @@ dependencies = [
 
 [[package]]
 name = "vl-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "vl-speech"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "log",
