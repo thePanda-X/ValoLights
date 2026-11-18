@@ -19,7 +19,7 @@ chrono = "0.4.45"
 ed25519-dalek = "2.2.0"
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 egui = "0.37.0"
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 glow = "0.17.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 libloading = "0.9.1"

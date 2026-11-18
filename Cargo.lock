@@ -3423,7 +3423,7 @@ dependencies = [
  "ed25519-dalek",
  "eframe",
  "egui",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "glow",
  "image",
  "libloading 0.9.1",
