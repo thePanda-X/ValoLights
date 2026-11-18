@@ -17,20 +17,20 @@ ab_glyph = "0.2.32"
 anyhow = "1.0.104"
 base64 = "0.22.1"
 chrono = "0.4.45"
-ed25519-dalek = "2.2.0"
+ed25519-dalek = "3.0.0"
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 egui = "0.37.0"
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 glow = "0.17.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 libloading = "0.9.1"
 log = "0.4.35"
 resvg = { version = "0.47.0", default-features = false }
-rfd = { version = "0.15.4", default-features = false }
+rfd = { version = "0.18.0", default-features = false }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 ureq = "3.5.2"
 uuid = { version = "1.29.3", features = ["v4"] }
 vl-core = { version = "0.3.0", path = "../vl-core" }
@@ -38,7 +38,7 @@ vl-engine = { version = "0.3.0", path = "../vl-engine" }
 vl-render = { version = "0.3.0", path = "../vl-render" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59.0", features = ["Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3.23.0"
