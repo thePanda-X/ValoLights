@@ -56,19 +56,42 @@ jobs:
             build/tools
           key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
 
-      # whisper.cpp's CUDA kernels (vl-speech): compiler, runtime, cuBLAS and the Visual Studio integration
+      # whisper.cpp's CUDA kernels (vl-speech): compiler, runtime, cuBLAS and the Visual Studio integration.
+      # NVIDIA's redistributable archives (SHA-256 from their manifest) unpacked where a normal install puts
+      # them; the network installer fails silently on the runners.
       - name: Install the CUDA toolkit 13.2
         shell: powershell
         run: |
-          $exe = Join-Path $env:RUNNER_TEMP "cuda_network.exe"
-          Invoke-WebRequest "https://developer.download.nvidia.com/compute/cuda/13.2.0/network_installers/cuda_13.2.0_windows_network.exe" -OutFile $exe
-          $parts = "nvcc_13.2", "cudart_13.2", "crt_13.2", "nvvm_13.2", "cccl_13.2", "cublas_13.2", "cublas_dev_13.2", "visual_studio_integration_13.2"
-          $p = Start-Process $exe -ArgumentList (@("-s") + $parts) -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "CUDA installer exited with $($p.ExitCode)" }
+          $ProgressPreference = "SilentlyContinue"
+          $base = "https://developer.download.nvidia.com/compute/cuda/redist"
+          $manifest = Invoke-RestMethod "$base/redistrib_13.2.0.json"
           $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2"
+          New-Item -ItemType Directory -Force $cuda | Out-Null
+          foreach ($c in "cuda_nvcc", "cuda_cudart", "cuda_crt", "libnvvm", "cuda_cccl", "libcublas", "visual_studio_integration") {
+            $a = $manifest.$c."windows-x86_64"
+            if (-not $a) { throw "$c is not in the CUDA 13.2 manifest" }
+            $zip = Join-Path $env:RUNNER_TEMP "$c.zip"
+            & curl.exe -fsSL --retry 5 --retry-all-errors -o $zip "$base/$($a.relative_path)"
+            if ($LASTEXITCODE -ne 0) { throw "could not download $c" }
+            if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $a.sha256) { throw "$c failed the SHA-256 check" }
+            $x = Join-Path $env:RUNNER_TEMP $c
+            & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $env:RUNNER_TEMP
+            if ($LASTEXITCODE -ne 0) { throw "could not unpack $c" }
+            $dir = Get-ChildItem $env:RUNNER_TEMP -Directory -Filter "$c-windows-x86_64-*-archive" | Select-Object -First 1
+            Copy-Item "$($dir.FullName)\*" $cuda -Recurse -Force
+            Write-Host "$c $($manifest.$c.version)"
+          }
           if (-not (Test-Path "$cuda\bin\nvcc.exe")) { throw "nvcc not found in $cuda" }
+          # MSBuild's CUDA support, for every Visual Studio toolset on the runner
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $targets = Get-Item "$vs\MSBuild\Microsoft\VC\*\BuildCustomizations"
+          if (-not $targets) { throw "no Visual Studio BuildCustomizations folder under $vs" }
+          foreach ($t in $targets) { Copy-Item "$cuda\visual_studio_integration\MSBuildExtensions\*" $t.FullName -Recurse -Force; Write-Host "CUDA MSBuild integration -> $($t.FullName)" }
           "CUDA_PATH=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_PATH_V13_2=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$cuda\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "$cuda\bin\x64" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & "$cuda\bin\nvcc.exe" --version
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
