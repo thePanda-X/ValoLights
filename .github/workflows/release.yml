@@ -122,7 +122,7 @@ jobs:
         shell: powershell
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          $lines = Get-Content CHANGELOG.md
+          $lines = Get-Content -Encoding UTF8 CHANGELOG.md   # Windows PowerShell reads BOM-less files as ANSI otherwise
           $start = ($lines | Select-String -Pattern "^## \[$([regex]::Escape($v))\]" | Select-Object -First 1).LineNumber
           if (-not $start) { throw "CHANGELOG.md has no section for $v" }
           $rest = $lines[$start..($lines.Count - 1)]
