@@ -50,7 +50,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Restore third-party binaries and models
         id: binaries
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             bin
@@ -64,7 +64,7 @@ jobs:
         run: ./tools/fetch_binaries.ps1
       - name: Save third-party binaries and models
         if: github.ref == 'refs/heads/main' && steps.binaries.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             bin
