@@ -1,0 +1,28 @@
+[package]
+name = "vl-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+ab_glyph = "0.2.32"
+anyhow = "1.0.104"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+log = { version = "0.4.35", features = ["std"] }
+once_cell = "1.21.4"
+rayon = "1.12.0"
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+sha1 = "0.10.6"
+vl-core = { version = "0.2.0", path = "../vl-core" }
+vl-engine = { version = "0.2.0", path = "../vl-engine" }
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[lints]
+workspace = true

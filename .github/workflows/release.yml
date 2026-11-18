@@ -1,0 +1,116 @@
+name: Release
+
+# Push a tag like v0.3.0 (matching the version in Cargo.toml) to build the Windows installer, sign the update
+# manifest and publish a GitHub release. The app checks
+# https://github.com/<owner>/<repo>/releases/latest/download/latest.json for updates.
+#
+# Needs the repository secret UPDATE_SIGNING_KEY (see docs/releasing.md).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. v0.3.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Version from the tag
+        id: version
+        shell: powershell
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne $env:TAG) { throw "tag $env:TAG does not match the version in Cargo.toml ($v)" }
+          "version=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+
+      - name: Cache third-party binaries and models
+        uses: actions/cache@v4
+        with:
+          path: |
+            bin
+            assets/ocr/*.onnx
+            assets/audio/*.onnx
+            assets/audio/LICENSE-yamnet.txt
+            build/tools
+          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
+
+      # whisper.cpp's CUDA kernels (vl-speech): compiler, runtime, cuBLAS and the Visual Studio integration
+      - name: Install the CUDA toolkit 13.2
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP "cuda_network.exe"
+          Invoke-WebRequest "https://developer.download.nvidia.com/compute/cuda/13.2.0/network_installers/cuda_13.2.0_windows_network.exe" -OutFile $exe
+          $parts = "nvcc_13.2", "cudart_13.2", "crt_13.2", "nvvm_13.2", "cccl_13.2", "cublas_13.2", "cublas_dev_13.2", "visual_studio_integration_13.2"
+          $p = Start-Process $exe -ArgumentList (@("-s") + $parts) -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "CUDA installer exited with $($p.ExitCode)" }
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2"
+          if (-not (Test-Path "$cuda\bin\nvcc.exe")) { throw "nvcc not found in $cuda" }
+          "CUDA_PATH=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$cuda\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build and self-test the app, then the installer
+        shell: powershell
+        run: ./build/installer.ps1
+
+      - name: Release notes from CHANGELOG.md
+        shell: powershell
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern "^## \[$([regex]::Escape($v))\]" | Select-Object -First 1).LineNumber
+          if (-not $start) { throw "CHANGELOG.md has no section for $v" }
+          $rest = $lines[$start..($lines.Count - 1)]
+          $end = ($rest | Select-String -Pattern "^## \[" | Select-Object -First 1).LineNumber
+          $notes = if ($end) { $rest[0..($end - 2)] } else { $rest }
+          ($notes -join "`n").Trim() | Out-File -Encoding utf8 dist\notes.md
+
+      - name: Signed update manifest (latest.json)
+        shell: powershell
+        env:
+          VALOLIGHTS_UPDATE_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if (-not $env:VALOLIGHTS_UPDATE_KEY) { throw "the UPDATE_SIGNING_KEY secret is not set" }
+          $v = "${{ steps.version.outputs.version }}"
+          $setup = "dist\ValoLights-Setup-$v.exe"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$env:TAG/ValoLights-Setup-$v.exe"
+          # valolights.exe is a GUI-subsystem program: PowerShell doesn't wait for it unless told to
+          $cli = @("cli", "release-manifest", "--installer", $setup, "--version", $v, "--url", $url, "--notes", "dist\notes.md", "-o", "dist\latest.json")
+          $p = Start-Process target\release\valolights.exe -ArgumentList $cli -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0 -or -not (Test-Path dist\latest.json)) { throw "release-manifest failed ($($p.ExitCode))" }
+          Get-Content dist\latest.json
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ValoLights ${{ env.TAG }}
+          body_path: dist/notes.md
+          prerelease: ${{ contains(env.TAG, '-') }}
+          files: |
+            dist/ValoLights-Setup-${{ steps.version.outputs.version }}.exe
+            dist/latest.json

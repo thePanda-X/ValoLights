@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Format and lint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+      - name: rustfmt
+        run: cargo fmt --all --check
+      # vl-speech compiles whisper.cpp (CMake + libclang); it is checked by the test job's CPU build
+      - name: clippy
+        run: cargo clippy --workspace --exclude vl-speech --all-targets -- -D warnings
+
+  test:
+    name: Tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+      - name: Cache third-party binaries and models
+        uses: actions/cache@v4
+        with:
+          path: |
+            bin
+            assets/ocr/*.onnx
+            assets/audio/*.onnx
+            assets/audio/LICENSE-yamnet.txt
+            build/tools
+          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
+      - name: Fetch ffmpeg, mpv, RIFE, models and libclang
+        shell: powershell
+        run: ./tools/fetch_binaries.ps1
+      - name: Unit tests
+        run: cargo test --release --workspace --exclude vl-speech
+      # the speech helper without CUDA (the release build has CUDA; CI runners have no GPU)
+      - name: Speech helper (CPU build)
+        run: cargo test --release -p vl-speech --no-default-features

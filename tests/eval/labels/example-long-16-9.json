@@ -1,0 +1,15 @@
+{
+  "video": "example-long-16-9.mp4",
+  "note": "Replay extract, scores 8-7 -> 11-8. Kill times from the independent full-OCR scan (1 fps) minus 0.5 s; headshots checked visually.",
+  "aliases": ["thePanda X"],
+  "rounds": 5,
+  "my_kills": [
+    {"t": 73.5, "victim": "saauul X", "headshot": false},
+    {"t": 150.5, "victim": "(Korean name)", "headshot": false},
+    {"t": 182.5, "victim": "OG Kiwa", "headshot": true},
+    {"t": 271.5, "victim": "Laresyn", "headshot": true},
+    {"t": 370.5, "victim": "OG Kiwa", "headshot": true},
+    {"t": 380.5, "victim": "saauul X", "headshot": false},
+    {"t": 391.5, "victim": "DawoodAK", "headshot": true}
+  ]
+}

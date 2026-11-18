@@ -1,0 +1,9 @@
+# Build environment for whisper.cpp (crates/vl-speech, via whisper-rs):
+# - libclang generates the C bindings: tools/fetch_binaries.ps1 puts a standalone libclang.dll in
+#   build/tools/libclang (no LLVM install needed)
+# - CUDA kernels for RTX 20-series and newer (CUDA 13 dropped GTX 10-series; those PCs transcribe on the CPU)
+# - CUDA_PATH must point at the toolkit Visual Studio's CUDA integration uses (13.x here)
+[env]
+LIBCLANG_PATH = { value = "build/tools/libclang/libclang-18.1.1.data/platlib/clang/native", relative = true }
+CUDAARCHS = "75;86;89;120"
+CUDA_PATH = { value = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2', force = true }

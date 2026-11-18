@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["crates/vl-core", "crates/vl-engine", "crates/vl-render", "crates/vl-app", "crates/vl-speech"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["thePanda-X"]
+repository = "https://github.com/thePanda-X/ValoLights"
+homepage = "https://github.com/thePanda-X/ValoLights"
+
+[workspace.lints.clippy]
+# deliberate in this code base: render/filter builders take many parameters, and the numeric kernels index
+# several arrays in lockstep
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4

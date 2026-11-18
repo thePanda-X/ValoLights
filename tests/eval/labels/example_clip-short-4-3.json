@@ -1,0 +1,13 @@
+{
+  "video": "example_clip-short-4-3.mp4",
+  "note": "Live recording, 1 round (10-6 -> 11-6, CLUTCH banner). Verified frame-by-frame at 6 fps; 'Me' = hide-names mode.",
+  "aliases": [],
+  "rounds": 2,
+  "my_kills": [
+    {"t": 15.6, "victim": "Dougei", "headshot": true},
+    {"t": 35.7, "victim": "Driox", "headshot": true},
+    {"t": 38.7, "victim": "Dougei", "headshot": true},
+    {"t": 39.6, "victim": "KoReSh", "headshot": true},
+    {"t": 41.2, "victim": "Avez | M8 dash", "headshot": true}
+  ]
+}

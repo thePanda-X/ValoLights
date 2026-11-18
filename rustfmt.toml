@@ -1,0 +1,3 @@
+# The code base favours wide lines (UI layout code reads better that way).
+max_width = 140
+use_small_heuristics = "Max"

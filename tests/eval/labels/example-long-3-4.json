@@ -1,0 +1,19 @@
+{
+  "video": "example-long-3-4.mp4",
+  "note": "Replay extract, pillarboxed 4:3 in 16:9, scores 0-0 -> 3-5. Times from an independent full-OCR scan + visual check of each row (frames 60-662 s); the player revives once (~300 s).",
+  "aliases": ["thePanda X"],
+  "rounds": 9,
+  "my_kills": [
+    {"t": 59.5, "victim": "DawoodAK", "headshot": true},
+    {"t": 120.5, "victim": "(Korean name)", "headshot": false},
+    {"t": 121.5, "victim": "DawoodAK", "headshot": false},
+    {"t": 216.5, "victim": "Laresyn", "headshot": true},
+    {"t": 219.5, "victim": "DawoodAK", "headshot": true},
+    {"t": 299.5, "victim": "(Korean name)", "headshot": true},
+    {"t": 303.8, "victim": "DawoodAK", "headshot": true},
+    {"t": 309.0, "victim": "saauul X", "headshot": true},
+    {"t": 629.8, "victim": "(Korean name)", "headshot": false},
+    {"t": 656.5, "victim": "OG Kiwa", "headshot": false},
+    {"t": 659.8, "victim": "saauul X", "headshot": false}
+  ]
+}

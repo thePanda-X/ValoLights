@@ -1,0 +1,45 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this! Please don't attach recordings that show other players' names unless they're fine with it.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: page
+    attributes:
+      label: Where?
+      options: [Clips / analysis, Trim, Layout, Subtitles, Export, Installer / updates, Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ValoLights version
+      description: Settings → Updates shows it.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Windows version and graphics card
+      placeholder: Windows 11 24H2, RTX 3060 (driver 581.xx)
+  - type: textarea
+    id: recording
+    attributes:
+      label: About the recording
+      description: Resolution, frame rate, game client language, HUD scale, own recording or replay, anything unusual.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The newest files in the data\logs folder (Settings → Data folder → Open). Paste the relevant part.
+      render: text
