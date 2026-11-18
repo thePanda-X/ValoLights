@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use vl_core::config::HighlightsCfg;
 use vl_core::image::BgrImage;
-use vl_core::models::{Events, GameArea, Kill, LayoutSpec, Part};
+use vl_core::models::{EffectSettings, Events, GameArea, Kill, LayoutSpec, Part};
 use vl_core::projects::ProjectHandle;
 
 /// Progress callback (fraction 0..1, message), same as `vl_core::jobs::Progress`.
@@ -102,12 +102,9 @@ pub fn build_segments(ev: &Events, me: &[String], cfg: &HighlightsCfg, duration:
         .collect()
 }
 
-/// Transition overlap.
-pub const TRANSITION_DUR: f64 = 0.35;
-
 /// Length of the exported video: parts placed back to back, transitions overlap neighbours.
-pub fn edit_duration(parts: &[Part], transition: &str) -> f64 {
-    vl_render::editlist::EditList::new(parts, transition).duration
+pub fn edit_duration(parts: &[Part], fx: &EffectSettings) -> f64 {
+    vl_render::editlist::EditList::new(parts, fx).duration
 }
 
 /// Default layout for an output aspect.
@@ -164,21 +161,21 @@ pub fn build_ass(
 }
 
 /// The music as heard under a back-to-back preview of `parts`.
-pub fn music_preview_wav(mus: &vl_core::models::MusicSettings, parts: &[Part], transition: &str, out_dir: &Path) -> Option<PathBuf> {
-    vl_render::music::preview_wav(mus, parts, transition, out_dir).ok().flatten()
+pub fn music_preview_wav(mus: &vl_core::models::MusicSettings, parts: &[Part], fx: &EffectSettings, out_dir: &Path) -> Option<PathBuf> {
+    vl_render::music::preview_wav(mus, parts, fx, out_dir).ok().flatten()
 }
 
 // ------------------------------------------------------------------ Export page (vl-render)
 
 /// The output timeline of a cut: (parts kept, duration, transition overlap).
-pub fn edit_list_info(parts: &[Part], transition: &str) -> (usize, f64, f64) {
-    let el = vl_render::editlist::EditList::new(parts, transition);
+pub fn edit_list_info(parts: &[Part], fx: &EffectSettings) -> (usize, f64, f64) {
+    let el = vl_render::editlist::EditList::new(parts, fx);
     (el.parts.len(), el.duration, el.td)
 }
 
 /// How many of these source times are in the cut.
-pub fn count_in_output(parts: &[Part], transition: &str, times: &[f64]) -> usize {
-    let el = vl_render::editlist::EditList::new(parts, transition);
+pub fn count_in_output(parts: &[Part], fx: &EffectSettings, times: &[f64]) -> usize {
+    let el = vl_render::editlist::EditList::new(parts, fx);
     times.iter().filter(|t| el.to_output(**t).is_some()).count()
 }
 
@@ -265,8 +262,8 @@ pub fn effective_layout(ed: &vl_core::models::Edits, ga: &GameArea) -> LayoutSpe
 }
 
 /// Output time of each source time, None where it is cut out.
-pub fn output_times(parts: &[Part], transition: &str, times: &[f64]) -> Vec<Option<f64>> {
-    let el = vl_render::editlist::EditList::new(parts, transition);
+pub fn output_times(parts: &[Part], fx: &EffectSettings, times: &[f64]) -> Vec<Option<f64>> {
+    let el = vl_render::editlist::EditList::new(parts, fx);
     times.iter().map(|t| el.to_output(*t)).collect()
 }
 
@@ -312,10 +309,10 @@ pub fn music_span(mus: &vl_core::models::MusicSettings, total: f64) -> (f64, f64
 pub fn music_preview_wav_result(
     mus: &vl_core::models::MusicSettings,
     parts: &[Part],
-    transition: &str,
+    fx: &EffectSettings,
     out_dir: &Path,
 ) -> Result<Option<PathBuf>> {
-    vl_render::music::preview_wav(mus, parts, transition, out_dir)
+    vl_render::music::preview_wav(mus, parts, fx, out_dir)
 }
 
 /// Song time that puts the song's best part under the edit, its drop on `first_kill`.
@@ -331,12 +328,12 @@ pub fn music_edit_beats(info: &SongInfo, mus: &vl_core::models::MusicSettings, t
 /// Move every cut onto a beat: (new parts, cuts moved onto a beat, cuts).
 pub fn music_sync_cuts(
     parts: &[Part],
-    transition: &str,
+    fx: &EffectSettings,
     beats: &[f64],
     kill_times: &[f64],
     src_duration: f64,
 ) -> (Vec<Part>, usize, usize) {
-    vl_render::music::sync_cuts(parts, transition, beats, kill_times, src_duration)
+    vl_render::music::sync_cuts(parts, fx, beats, kill_times, src_duration)
 }
 
 /// Index of the round a moment belongs to.

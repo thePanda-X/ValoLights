@@ -69,7 +69,7 @@ fn main() -> anyhow::Result<()> {
         "preview-wav" => {
             let h = projects::open_dir(Path::new(&a[2]))?;
             let ed = h.edits();
-            let r = music::preview_wav(&ed.music, &ed.parts, &ed.effects.transition, Path::new(&a[3]))?;
+            let r = music::preview_wav(&ed.music, &ed.parts, &ed.effects, Path::new(&a[3]))?;
             println!("{:?}", r);
         }
         "advances" => {

@@ -355,7 +355,7 @@ pub fn render_project(h: &ProjectHandle, out: &Path, progress: Progress, proxy: 
     if parts.is_empty() {
         parts = vec![Part::new(0.0, duration.min(30.0))];
     }
-    let el = EditList::new(&parts, &ed.effects.transition);
+    let el = EditList::new(&parts, &ed.effects);
     if el.placed.is_empty() {
         bail!("Nothing to render");
     }

@@ -409,12 +409,23 @@ pub struct EffectSettings {
     pub flash_on_kill: bool,
     /// "none" | "fade" | "flash" | "blur"
     pub transition: String,
+    /// how long each transition overlaps the parts on either side, seconds ([`TRANSITION_SECS`])
+    pub transition_secs: f64,
     pub super_smooth: bool,
     /// "faster" (optical-flow motion blur) | "fast" (AI frames, 4 per frame) | "subtle" (HD: AI frames, 8 per
     /// frame) | "custom" (`smooth_custom`). Older projects may say "strong" (migrated to custom on load).
     pub smooth_amount: String,
     pub smooth_custom: SmoothCustom,
 }
+
+/// Range of [`EffectSettings::transition_secs`].
+pub struct SecsRange {
+    pub min: f64,
+    pub max: f64,
+    pub default: f64,
+}
+
+pub const TRANSITION_SECS: SecsRange = SecsRange { min: 0.1, max: 2.0, default: 0.35 };
 
 /// Hand-picked super smooth settings (`smooth_amount = "custom"`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -456,6 +467,7 @@ impl Default for EffectSettings {
             zoom_per_kill: BTreeMap::new(),
             flash_on_kill: false,
             transition: "none".into(),
+            transition_secs: TRANSITION_SECS.default,
             super_smooth: false,
             smooth_amount: "faster".into(),
             smooth_custom: SmoothCustom::default(),
@@ -557,6 +569,12 @@ pub fn load_json<T: for<'de> Deserialize<'de>>(path: &Path) -> anyhow::Result<T>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn older_projects_keep_the_old_transition_length() {
+        let fx: EffectSettings = serde_json::from_str(r#"{"transition": "fade"}"#).unwrap();
+        assert_eq!((fx.transition.as_str(), fx.transition_secs), ("fade", 0.35));
+    }
 
     #[test]
     fn edits_roundtrip_json_names() {

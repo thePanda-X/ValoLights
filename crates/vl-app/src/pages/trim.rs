@@ -175,7 +175,8 @@ fn to_parts(spans: &[(f64, f64)]) -> Vec<Part> {
 }
 
 fn music_sig(st: &AppState) -> (String, String) {
-    (serde_json::to_string(&st.ed.music).unwrap_or_default(), st.ed.effects.transition.clone())
+    let fx = &st.ed.effects;
+    (serde_json::to_string(&st.ed.music).unwrap_or_default(), format!("{}:{}", fx.transition, fx.transition_secs))
 }
 
 fn quick_name(key: &str) -> String {
@@ -508,7 +509,7 @@ impl TrimPage {
         for k in self.timeline.kills.iter_mut() {
             k.enabled = !st.ed.kills_disabled.contains(&k.id);
         }
-        let new_el = EditList::new(&st.ed.parts, "none");
+        let new_el = EditList::plain(&st.ed.parts);
         let same = |a: &EditList| a.placed.iter().map(|p| (p.src_in, p.src_out)).eq(new_el.placed.iter().map(|p| (p.src_in, p.src_out)));
         if self.mode == Mode::Edit && !self.el.as_ref().map(same).unwrap_or(false) {
             self.reload_player(st, true);
@@ -547,7 +548,7 @@ impl TrimPage {
         let subs = self.preview_subs(st);
         let has_audio = h.project.source.has_audio;
         if self.mode == Mode::Edit && !st.ed.parts.is_empty() {
-            let el = EditList::new(&st.ed.parts, "none");
+            let el = EditList::plain(&st.ed.parts);
             let url = edl_url(h.source(), &spans(st));
             let start = src_pos.map(|s| Self::out_near(&el, s)).unwrap_or(0.0);
             self.el = Some(el);
@@ -566,9 +567,9 @@ impl TrimPage {
             return None;
         }
         let el = if self.mode == Mode::Edit && !st.ed.parts.is_empty() {
-            EditList::new(&st.ed.parts, "none")
+            EditList::plain(&st.ed.parts)
         } else {
-            EditList::new(&[Part::new(0.0, st.duration())], "none")
+            EditList::plain(&[Part::new(0.0, st.duration())])
         };
         let (w, hh) = h.project.game_area.as_ref().map(|g| (g.w as i64, g.h as i64)).unwrap_or((1920, 1080));
         let out = Self::cache_dir(st)?.join(format!("preview_{}.ass", self.mode.name()));
@@ -1026,11 +1027,11 @@ impl TrimPage {
         let Some(cache) = Self::cache_dir(st) else { return };
         self.loaded_music = None;
         self.music_gen += 1;
-        let (gen, parts, tr) = (self.music_gen, st.ed.parts.clone(), st.ed.effects.transition.clone());
+        let (gen, parts, fx) = (self.music_gen, st.ed.parts.clone(), st.ed.effects.clone());
         let playing = self.player.is_playing();
         let (tx, ctx, url) = (self.tx.clone(), self.egui_ctx.clone(), url.to_string());
         std::thread::spawn(move || {
-            let res = backend::music_preview_wav_result(&mus, &parts, &tr, &cache).map_err(|e| e.to_string());
+            let res = backend::music_preview_wav_result(&mus, &parts, &fx, &cache).map_err(|e| e.to_string());
             let _ = tx.send(Bg::Wav { gen, url, start, subs, playing, res });
             if let Some(c) = ctx {
                 c.request_repaint();
@@ -1136,7 +1137,7 @@ impl TrimPage {
                 }
             }
         }
-        self.el_out = if st.ed.parts.is_empty() { None } else { Some(EditList::new(&st.ed.parts, &st.ed.effects.transition)) };
+        self.el_out = if st.ed.parts.is_empty() { None } else { Some(EditList::new(&st.ed.parts, &st.ed.effects)) };
         let total = self.el_out.as_ref().map(|e| e.duration).unwrap_or(0.0);
         self.lane.set_placement(mus.song_in, mus.start, mus.end, total);
         let (a, b) = backend::music_span(&mus, total);
@@ -1227,8 +1228,8 @@ impl TrimPage {
         if st.ed.parts.is_empty() {
             return;
         }
-        let tr = st.ed.effects.transition.clone();
-        let el = EditList::new(&st.ed.parts, &tr);
+        let fx = st.ed.effects.clone();
+        let el = EditList::new(&st.ed.parts, &fx);
         let kills = st.my_kills(false);
         let mut mus = st.ed.music.clone();
         if find_part {
@@ -1240,7 +1241,7 @@ impl TrimPage {
         }
         let beats = backend::music_edit_beats(&song, &mus, el.duration, false);
         let kt: Vec<f64> = kills.iter().map(|k| k.t).collect();
-        let (new, moved, total) = backend::music_sync_cuts(&st.ed.parts, &tr, &beats, &kt, st.duration());
+        let (new, moved, total) = backend::music_sync_cuts(&st.ed.parts, &fx, &beats, &kt, st.duration());
         st.begin_step();
         st.ed.music = mus.clone();
         st.set_parts(new, false);

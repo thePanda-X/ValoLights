@@ -755,17 +755,20 @@ impl SubtitlesPage {
                 self.portrait = w <= hh;
                 let mus = &st.ed.music;
                 let pid = h.project.id.clone();
-                let rest = format!("{parts:?}|{graph}|{}|{}", serde_json::to_string(mus).unwrap_or_default(), st.ed.effects.transition);
+                let fx = &st.ed.effects;
+                let rest = format!(
+                    "{parts:?}|{graph}|{}|{}:{}",
+                    serde_json::to_string(mus).unwrap_or_default(),
+                    fx.transition,
+                    fx.transition_secs
+                );
                 let sig = (pid.clone(), rest);
                 if self.loaded_sig.as_ref() != Some(&sig) {
                     let start = if self.loaded_sig.as_ref().map(|s| s.0 == pid).unwrap_or(false) { self.last_pos } else { 0.0 };
                     let out_dir = if st.read_only { vl_core::paths::tmp_dir() } else { h.dir.join("cache") };
                     // the same music track as Trim's preview (cached, so usually instant)
-                    let wav = if st.ed.parts.is_empty() {
-                        None
-                    } else {
-                        backend::music_preview_wav(mus, &st.ed.parts, &st.ed.effects.transition, &out_dir)
-                    };
+                    let wav =
+                        if st.ed.parts.is_empty() { None } else { backend::music_preview_wav(mus, &st.ed.parts, &st.ed.effects, &out_dir) };
                     let start = start.min(edit_duration(st));
                     let load = Load {
                         start,

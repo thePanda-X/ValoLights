@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 use vl_core::ffmpeg as ff;
-use vl_core::models::{MusicSettings, Part};
+use vl_core::models::{EffectSettings, MusicSettings, Part};
 use vl_core::paths;
 
 pub const SR: usize = 22050;
@@ -118,18 +118,25 @@ fn music_json(m: &MusicSettings) -> String {
 /// The music as heard under a back-to-back preview of `parts` (no transitions in the preview). Each part
 /// gets exactly the music it gets in the export, so cuts land on the same beats. Cached by its inputs
 /// (the cache file name).
-pub fn preview_wav(mus: &MusicSettings, parts: &[Part], transition: &str, out_dir: &Path) -> Result<Option<PathBuf>> {
+pub fn preview_wav(mus: &MusicSettings, parts: &[Part], fx: &EffectSettings, out_dir: &Path) -> Result<Option<PathBuf>> {
     if !(mus.enabled && !mus.path.is_empty() && Path::new(&mus.path).exists() && !parts.is_empty()) {
         return Ok(None);
     }
-    let el = EditList::new(parts, transition);
+    let el = EditList::new(parts, fx);
     if el.placed.is_empty() {
         return Ok(None);
     }
     let mp = Path::new(&mus.path);
     let size = std::fs::metadata(mp)?.len();
     let plist: Vec<String> = el.parts.iter().map(|p| format!("[{}, {}]", json_f(p.src_in), json_f(p.src_out))).collect();
-    let key = format!("[{}, {}, {}, [{}], {}]", music_json(mus), json_f(mtime(mp)?), size, plist.join(", "), json_str(transition));
+    let key = format!(
+        "[{}, {}, {}, [{}], {}]",
+        music_json(mus),
+        json_f(mtime(mp)?),
+        size,
+        plist.join(", "),
+        json_str(&format!("{}:{}", fx.transition, f(el.td, 3)))
+    );
     let out = out_dir.join(format!("music_{}.wav", &sha1_hex(&key)[..16]));
     if out.exists() {
         return Ok(Some(out));
@@ -548,7 +555,7 @@ pub fn edit_beats(info: &SongInfo, mus: &MusicSettings, total: f64, bounded: boo
 
 /// Move each cut (and the end) onto the nearest beat by lengthening or shortening the part before it,
 /// never by more than one beat and never cutting into a kill. Returns (parts, cuts moved, cuts total).
-pub fn sync_cuts(parts: &[Part], transition: &str, beats: &[f64], kill_times: &[f64], src_duration: f64) -> (Vec<Part>, usize, usize) {
+pub fn sync_cuts(parts: &[Part], fx: &EffectSettings, beats: &[f64], kill_times: &[f64], src_duration: f64) -> (Vec<Part>, usize, usize) {
     let mut parts = parts.to_vec();
     parts.sort_by(|a, b| a.src_in.total_cmp(&b.src_in));
     if beats.is_empty() || parts.is_empty() {
@@ -557,7 +564,7 @@ pub fn sync_cuts(parts: &[Part], transition: &str, beats: &[f64], kill_times: &[
     let period = if beats.len() > 1 { numfmt::median(&beats.windows(2).map(|w| w[1] - w[0]).collect::<Vec<_>>()) } else { 0.5 };
     let mut moved = 0;
     for i in 0..parts.len() {
-        let el = EditList::new(&parts, transition);
+        let el = EditList::new(&parts, fx);
         if i >= el.placed.len() {
             break;
         }
@@ -700,11 +707,12 @@ mod tests {
         let parts = [Part::new(10.0, 16.3), Part::new(30.0, 34.1), Part::new(50.0, 57.77)];
         let kills = [13.5, 32.0, 52.0, 55.0];
         for tr in ["none", "fade"] {
-            let el = EditList::new(&parts, tr);
+            let fx = EffectSettings { transition: tr.into(), transition_secs: 0.6, ..Default::default() };
+            let el = EditList::new(&parts, &fx);
             let mus = MusicSettings { path: "x".into(), enabled: true, song_in: best_part(info, el.duration, 3.5), ..Default::default() };
-            let (new, moved, total) = sync_cuts(&parts, tr, &edit_beats(info, &mus, el.duration, false), &kills, 120.0);
+            let (new, moved, total) = sync_cuts(&parts, &fx, &edit_beats(info, &mus, el.duration, false), &kills, 120.0);
             assert!(moved == 3 && total == 3);
-            let el2 = EditList::new(&new, tr);
+            let el2 = EditList::new(&new, &fx);
             let beats: Vec<f64> = info.beats.iter().map(|b| b - mus.song_in).collect();
             let mut cuts: Vec<f64> = el2.placed[1..].iter().map(|pl| pl.out_start + el2.td / 2.0).collect();
             cuts.push(el2.duration);

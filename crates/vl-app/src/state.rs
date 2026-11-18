@@ -369,7 +369,7 @@ impl AppState {
         if self.ed.parts.is_empty() {
             return 0.0;
         }
-        backend::edit_duration(&self.ed.parts, &self.ed.effects.transition)
+        backend::edit_duration(&self.ed.parts, &self.ed.effects)
     }
 
     pub fn my_kills(&self, include_disabled: bool) -> Vec<Kill> {

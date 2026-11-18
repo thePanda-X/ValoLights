@@ -122,6 +122,8 @@ enum Do {
     Kzoom(i64),
     PerKill(String, i64),
     Transition(String),
+    /// hundredths of a second
+    TransitionSecs(i64),
     Smooth(bool),
     SmoothAmount(String),
     /// custom super smooth: "flow" | "rife"
@@ -486,15 +488,26 @@ impl LayoutPage {
                 .collect();
         }
         let ts: Vec<f64> = kills.iter().map(|k| k.t).collect();
-        let outs = backend::output_times(parts, &st.ed.effects.transition, &ts);
+        let outs = backend::output_times(parts, &st.ed.effects, &ts);
         kills.into_iter().zip(outs).filter_map(|(k, t)| t.map(|t| (k, t))).collect()
     }
 
-    pub fn tr_note(st: &AppState) -> &'static str {
+    pub fn tr_note(st: &AppState) -> String {
+        let fx = &st.ed.effects;
         if st.ed.parts.len() <= 1 {
-            "Your cut is one part, so there is nothing to blend"
+            return "Your cut is one part, so there is nothing to blend".into();
+        }
+        if fx.transition == "none" {
+            return "Shown in Preview video".into();
+        }
+        let wanted = vl_render::editlist::EditList::wanted(fx);
+        let (_, _, td) = backend::edit_list_info(&st.ed.parts, fx);
+        if td == 0.0 {
+            "Your shortest part is too short to blend, so there are no transitions. Make it longer in Trim".into()
+        } else if td < wanted - 1e-9 {
+            format!("Shortened to {} to fit your shortest part: each blend overlaps the parts on either side", secs_label(td))
         } else {
-            "Shown in Preview video. Each blend overlaps the parts on either side by 0.35 s"
+            format!("Shown in Preview video. Each blend overlaps the parts on either side by {}", secs_label(td))
         }
     }
 
@@ -819,6 +832,13 @@ impl LayoutPage {
             Do::Transition(v) => {
                 if st.ed.effects.transition != v {
                     Self::step(st, |st| st.ed.effects.transition = v);
+                }
+            }
+            Do::TransitionSecs(v) => {
+                let v = v as f64 / 100.0;
+                if st.ed.effects.transition_secs != v {
+                    st.ed.effects.transition_secs = v;
+                    st.touch();
                 }
             }
             Do::Smooth(v) => self.smooth_toggled(st, v, ctx),
@@ -1267,8 +1287,17 @@ impl LayoutPage {
                     ) {
                         acts.push(Do::Transition(k));
                     }
+                    if fx.transition != "none" {
+                        let r = vl_core::models::TRANSITION_SECS;
+                        let (lo, hi) = ((r.min * 100.0).round() as i64, (r.max * 100.0).round() as i64);
+                        let v = (vl_render::editlist::EditList::wanted(fx) * 100.0).round() as i64;
+                        let tip = "How long each transition takes. It overlaps the end of one part with the start of the next, so longer transitions make the video shorter";
+                        if let Some(v) = self.slider_row(ui, "tr_secs", "Length", v, lo, hi, &secs_label(v as f64 / 100.0), true, tip) {
+                            acts.push(Do::TransitionSecs(v));
+                        }
+                    }
                 });
-                ui::hint(ui, Self::tr_note(st));
+                ui::hint(ui, &Self::tr_note(st));
             });
             p.section(Some("Super smooth"), |ui| {
                 let mut on = checking || fx.super_smooth;
@@ -1651,5 +1680,21 @@ impl Page for LayoutPage {
 
     fn shutdown(&mut self) {
         self.player.shutdown();
+    }
+}
+
+/// "0.35 s", "1.2 s", "2 s"
+pub fn secs_label(s: f64) -> String {
+    let t = format!("{s:.2}");
+    format!("{} s", t.trim_end_matches('0').trim_end_matches('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn secs_labels() {
+        assert_eq!(super::secs_label(0.35), "0.35 s");
+        assert_eq!(super::secs_label(1.2), "1.2 s");
+        assert_eq!(super::secs_label(2.0), "2 s");
     }
 }

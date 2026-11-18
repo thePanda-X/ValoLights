@@ -308,9 +308,9 @@ impl ExportPage {
             self.clean_leftovers(st);
         }
         let ed = &st.ed;
-        let (n, dur, td) = backend::edit_list_info(&ed.parts, &ed.effects.transition);
+        let (n, dur, td) = backend::edit_list_info(&ed.parts, &ed.effects);
         let times: Vec<f64> = st.my_kills(false).iter().map(|k| k.t).collect();
-        let kills = backend::count_in_output(&ed.parts, &ed.effects.transition, &times);
+        let kills = backend::count_in_output(&ed.parts, &ed.effects, &times);
         let aspect = backend::output_aspect(ed, h.project.game_area.as_ref());
         let (w, hh) = backend::canvas_size(&aspect, self.resolution as i64);
         self.summary = format!(
@@ -334,7 +334,7 @@ impl ExportPage {
             extras.push("kill flash".into());
         }
         if ed.effects.transition != "none" && td != 0.0 {
-            extras.push(format!("{} transitions", ed.effects.transition));
+            extras.push(format!("{} transitions ({})", ed.effects.transition, crate::pages::layout::secs_label(td)));
         }
         if ed.effects.look != "none" {
             extras.push(format!("{} look", ed.effects.look));

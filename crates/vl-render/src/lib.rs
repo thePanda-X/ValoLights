@@ -16,4 +16,4 @@ pub mod smart;
 pub mod smooth;
 pub mod vecblur;
 
-pub use editlist::{EditList, Placed, TRANSITION_DUR};
+pub use editlist::{EditList, Placed};

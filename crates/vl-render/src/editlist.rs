@@ -1,7 +1,8 @@
 //! Map the kept source parts onto the output timeline (with optional transitions).
-use vl_core::models::Part;
+use vl_core::models::{EffectSettings, Part, TRANSITION_SECS};
 
-pub const TRANSITION_DUR: f64 = 0.35;
+/// Unblended time every part keeps between the transitions on either side of it.
+const CLEAR: f64 = 0.1;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placed {
@@ -21,18 +22,26 @@ impl Placed {
 pub struct EditList {
     pub parts: Vec<Part>,
     pub transition: String,
+    /// the transition overlap actually used: the requested length, shortened to fit the shortest part
+    /// (0 = no transitions)
     pub td: f64,
     pub placed: Vec<Placed>,
     pub duration: f64,
 }
 
 impl EditList {
-    pub fn new(parts: &[Part], transition: &str) -> Self {
+    pub fn new(parts: &[Part], fx: &EffectSettings) -> Self {
+        let transition = fx.transition.as_str();
         let parts: Vec<Part> = parts.iter().copied().filter(|p| p.src_out - p.src_in > 0.05).collect();
-        let mut td = if transition != "none" && parts.len() > 1 { TRANSITION_DUR } else { 0.0 };
-        // transitions need both neighbours to be longer than the overlap
-        if td != 0.0 && parts.iter().any(|p| p.src_out - p.src_in <= td * 2.0) {
-            td = 0.0;
+        let mut td = if transition != "none" && parts.len() > 1 { Self::wanted(fx) } else { 0.0 };
+        // a part is overlapped on both sides: shorten the transitions to fit the shortest part, and drop them
+        // when even the shortest transition doesn't fit
+        if td != 0.0 {
+            let shortest = parts.iter().map(|p| p.src_out - p.src_in).fold(f64::INFINITY, f64::min);
+            let fit = ((shortest - CLEAR) / 2.0 * 100.0 + 1e-6).floor() / 100.0;
+            if fit < td {
+                td = if fit >= TRANSITION_SECS.min { fit } else { 0.0 };
+            }
         }
         let mut placed = Vec::with_capacity(parts.len());
         let mut t = 0.0;
@@ -46,7 +55,16 @@ impl EditList {
 
     /// No transitions.
     pub fn plain(parts: &[Part]) -> Self {
-        Self::new(parts, "none")
+        Self::new(parts, &EffectSettings::default())
+    }
+
+    /// The transition length the settings ask for (within the allowed range).
+    pub fn wanted(fx: &EffectSettings) -> f64 {
+        if fx.transition_secs.is_finite() {
+            fx.transition_secs.clamp(TRANSITION_SECS.min, TRANSITION_SECS.max)
+        } else {
+            TRANSITION_SECS.default
+        }
     }
 
     /// Output time for a source time, or None when the moment is cut out.
@@ -112,17 +130,40 @@ mod tests {
         assert_eq!(el.map_range(14.0, 31.0), vec![(4.0, 5.0), (5.0, 6.0)]);
     }
 
+    fn fade(secs: f64) -> EffectSettings {
+        EffectSettings { transition: "fade".into(), transition_secs: secs, ..Default::default() }
+    }
+
     #[test]
     fn editlist_transitions_overlap() {
-        let el = EditList::new(&[Part::new(0.0, 5.0), Part::new(10.0, 15.0)], "fade");
-        assert!(el.td > 0.0);
+        let el = EditList::new(&[Part::new(0.0, 5.0), Part::new(10.0, 15.0)], &fade(0.35));
+        assert_eq!(el.td, 0.35);
         assert_eq!(el.duration, 10.0 - el.td);
         assert_eq!(el.placed[1].out_start, 5.0 - el.td);
     }
 
     #[test]
-    fn editlist_transitions_disabled_for_short_parts() {
-        let el = EditList::new(&[Part::new(0.0, 0.5), Part::new(10.0, 15.0)], "fade");
+    fn editlist_transition_length_is_adjustable() {
+        let parts = [Part::new(0.0, 5.0), Part::new(10.0, 15.0), Part::new(20.0, 25.0)];
+        let el = EditList::new(&parts, &fade(1.2));
+        assert_eq!(el.td, 1.2);
+        assert!((el.duration - (15.0 - 2.0 * 1.2)).abs() < 1e-9);
+        // out of range or missing values fall back into the range
+        assert_eq!(EditList::new(&parts, &fade(9.0)).td, TRANSITION_SECS.max);
+        assert_eq!(EditList::new(&parts, &fade(0.0)).td, TRANSITION_SECS.min);
+        assert_eq!(EditList::new(&parts, &fade(f64::NAN)).td, TRANSITION_SECS.default);
+        // "none" ignores the length
+        let none = EffectSettings { transition_secs: 1.2, ..Default::default() };
+        assert_eq!(EditList::new(&parts, &none).td, 0.0);
+    }
+
+    #[test]
+    fn editlist_transitions_shortened_to_fit_short_parts() {
+        // a 1.5 s part fits at most (1.5 - 0.1) / 2 = 0.7 s on each side
+        let el = EditList::new(&[Part::new(0.0, 5.0), Part::new(10.0, 11.5), Part::new(20.0, 25.0)], &fade(2.0));
+        assert_eq!(el.td, 0.7);
+        // too short for even the shortest transition: none at all
+        let el = EditList::new(&[Part::new(0.0, 0.25), Part::new(10.0, 15.0)], &fade(0.35));
         assert_eq!(el.td, 0.0);
     }
 }

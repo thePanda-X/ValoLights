@@ -318,7 +318,7 @@ mod tests {
         let w = |a: f64, t: &str| Word { start: a, end: a + 0.4, text: t.into(), censored: false };
         let words = vec![w(1.0, "one"), w(1.5, "two"), w(2.0, "three"), w(2.5, "four"), w(3.0, "five")];
         let tr = Transcript { segments: vec![seg(1.0, 3.6, "one two three four five", words)], ..Default::default() };
-        let el = EditList::new(&[Part::new(0.0, 10.0)], "none");
+        let el = EditList::plain(&[Part::new(0.0, 10.0)]);
         let mut st = SubtitleSettings::default();
         let texts = |st: &SubtitleSettings| -> Vec<String> {
             ass_text(&tr, st, &el, 1920, 1080, "#FF0000", None)

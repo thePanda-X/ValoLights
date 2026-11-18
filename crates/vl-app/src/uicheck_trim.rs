@@ -4,7 +4,7 @@
 //! Works on scratch copies `data/projects/rustqa_trim_*` (deleted at the end). Every other project and
 //! data/config.toml are hashed before and after. Input is injected as egui events (mouse, keys, wheel).
 use crate::app::{self, MainWindow, Options, ValoApp};
-use crate::backend::{self, EditList};
+use crate::backend::EditList;
 use crate::pages::trim::Mode;
 use crate::pages::{LAYOUT, SUBTITLES, TRIM};
 use egui::{pos2, vec2, Event, Key, Modifiers, MouseWheelUnit, PointerButton, Pos2};
@@ -1101,7 +1101,7 @@ fn steps() -> Vec<StepFn> {
     s.push(wait(1.0));
     s.push(act(|e| {
         let m = e.w.st.ed.music.clone();
-        let el = EditList::new(&e.w.st.ed.parts, &e.w.st.ed.effects.transition);
+        let el = EditList::new(&e.w.st.ed.parts, &e.w.st.ed.effects);
         let song = e.w.trim.song.clone().unwrap();
         let beats: Vec<f64> = song.beats.iter().map(|b| b - m.song_in).collect();
         let mut cuts: Vec<f64> = el.placed.iter().skip(1).map(|p| p.out_start + el.td / 2.0).collect();
@@ -1465,6 +1465,5 @@ pub fn run(args: &[String]) -> i32 {
     let report = format!("{report}\nRESULT: {} ({} checks, {fails} failed)\n", if fails == 0 { "PASS" } else { "FAIL" }, results.len());
     let _ = std::fs::write(paths::app_root().join("scratch").join("vl-app-trim").join("uicheck_trim_report.txt"), &report);
     println!("{report}");
-    let _ = backend::TRANSITION_DUR;
     i32::from(fails > 0)
 }
