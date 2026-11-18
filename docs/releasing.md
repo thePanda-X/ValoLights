@@ -37,6 +37,14 @@ The workflow then:
 4. writes `latest.json`: version, release notes, installer URL, size, SHA-256 and the Ed25519 signature,
 5. publishes the GitHub release with `ValoLights-Setup-x.y.z.exe` and `latest.json`.
 
+A release takes about 15 minutes when the build cache is warm, and over an hour when whisper.cpp's CUDA kernels
+have to be compiled from scratch (the log reports how many of them are done every minute). Build caches are
+saved from `main` only, because release tags can restore `main`'s caches but not each other's. The same
+workflow runs every Monday on `main` without publishing anything: it builds and self-tests the app, which
+keeps the cache from expiring (GitHub deletes caches unused for 7 days) and catches broken release builds
+early. To warm the cache before a release (say after updating whisper-rs), run the Release workflow by hand on
+`main` with the tag field left empty.
+
 Tags with a suffix (`v0.3.0-beta.1`) are published as pre-releases. GitHub's "latest" release (which the app
 checks) skips pre-releases, so testers can install them by hand without offering them to everyone.
 

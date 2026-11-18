@@ -16,6 +16,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Caches are saved from main only (pull requests restore main's): GitHub keeps 10 GB of caches per
+# repository and evicts the least recently used, which would otherwise include the release build's.
+
 jobs:
   lint:
     name: Format and lint
@@ -28,6 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: rustfmt
         run: cargo fmt --all --check
       # vl-speech compiles whisper.cpp (CMake + libclang); it is checked by the test job's CPU build
@@ -43,8 +47,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: test
-      - name: Cache third-party binaries and models
-        uses: actions/cache@v4
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Restore third-party binaries and models
+        id: binaries
+        uses: actions/cache/restore@v4
         with:
           path: |
             bin
@@ -56,6 +62,17 @@ jobs:
       - name: Fetch ffmpeg, mpv, RIFE, models and libclang
         shell: powershell
         run: ./tools/fetch_binaries.ps1
+      - name: Save third-party binaries and models
+        if: github.ref == 'refs/heads/main' && steps.binaries.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            bin
+            assets/ocr/*.onnx
+            assets/audio/*.onnx
+            assets/audio/LICENSE-yamnet.txt
+            build/tools
+          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
       - name: Unit tests
         run: cargo test --release --workspace --exclude vl-speech
       # the speech helper without CUDA (the release build has CUDA; CI runners have no GPU)

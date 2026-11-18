@@ -5,15 +5,21 @@ name: Release
 # https://github.com/<owner>/<repo>/releases/latest/download/latest.json for updates.
 #
 # Needs the repository secret UPDATE_SIGNING_KEY (see docs/releasing.md).
+#
+# Every Monday (and when run by hand without a tag) it only builds and self-tests main, publishing nothing. That keeps the build cache
+# (mostly whisper.cpp's CUDA kernels, about an hour to compile from scratch) from expiring: GitHub deletes
+# caches that go unused for 7 days. Caches are saved from main only, so release tags can restore them.
 
 on:
   push:
     tags: ["v*"]
+  schedule:
+    - cron: "0 4 * * 1"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build, e.g. v0.3.0"
-        required: true
+        description: "Existing tag to build and publish, e.g. v0.3.0 (empty: only build and self-test main)"
+        required: false
 
 permissions:
   contents: write
@@ -21,6 +27,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  # tag pushes and runs given a tag publish; the Monday run and runs without a tag only build
+  PUBLISH: ${{ github.event_name == 'push' || (github.event.inputs.tag || '') != '' }}
 
 jobs:
   windows:
@@ -33,6 +41,7 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Version from the tag
+        if: env.PUBLISH == 'true'
         id: version
         shell: powershell
         run: |
@@ -44,9 +53,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Cache third-party binaries and models
-        uses: actions/cache@v4
+      - name: Restore third-party binaries and models
+        uses: actions/cache/restore@v4
         with:
           path: |
             bin
@@ -94,13 +104,21 @@ jobs:
           & "$cuda\bin\nvcc.exe" --version
 
       - name: Install Inno Setup
+        if: env.PUBLISH == 'true'
         run: choco install innosetup -y --no-progress
 
+      - name: Build and self-test the app (build only)
+        if: env.PUBLISH != 'true'
+        shell: powershell
+        run: ./build/build.ps1
+
       - name: Build and self-test the app, then the installer
+        if: env.PUBLISH == 'true'
         shell: powershell
         run: ./build/installer.ps1
 
       - name: Release notes from CHANGELOG.md
+        if: env.PUBLISH == 'true'
         shell: powershell
         run: |
           $v = "${{ steps.version.outputs.version }}"
@@ -110,9 +128,11 @@ jobs:
           $rest = $lines[$start..($lines.Count - 1)]
           $end = ($rest | Select-String -Pattern "^## \[" | Select-Object -First 1).LineNumber
           $notes = if ($end) { $rest[0..($end - 2)] } else { $rest }
-          ($notes -join "`n").Trim() | Out-File -Encoding utf8 dist\notes.md
+          # UTF-8 without a byte order mark (Out-File -Encoding utf8 adds one in Windows PowerShell)
+          [IO.File]::WriteAllText((Join-Path $PWD "dist\notes.md"), ($notes -join "`n").Trim(), (New-Object Text.UTF8Encoding $false))
 
       - name: Signed update manifest (latest.json)
+        if: env.PUBLISH == 'true'
         shell: powershell
         env:
           VALOLIGHTS_UPDATE_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
@@ -128,6 +148,7 @@ jobs:
           Get-Content dist\latest.json
 
       - name: Publish the release
+        if: env.PUBLISH == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}

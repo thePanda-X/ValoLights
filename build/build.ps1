@@ -23,8 +23,22 @@ Write-Host "== Fetching ffmpeg, libmpv, RIFE, OCR models and libclang"
 if ($LASTEXITCODE -ne 0) { throw "fetch_binaries failed" }
 
 Write-Host "== cargo build --release (the first build compiles whisper.cpp's CUDA kernels: ~25 min)"
-cargo build --release -p vl-app -p vl-speech
-if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+# cargo prints nothing while whisper.cpp's CUDA kernels compile, so report progress every minute
+$cargo = Start-Process cargo -ArgumentList "build", "--release", "-p", "vl-app", "-p", "vl-speech" -NoNewWindow -PassThru
+$null = $cargo.Handle   # keeps the exit code readable after the process ends
+$started = Get-Date
+while (-not $cargo.WaitForExit(60000)) {
+    $line = "   ... still building ($([int]((Get-Date) - $started).TotalMinutes) min)"
+    $proj = Get-ChildItem "target/release/build/whisper-rs-sys-*/out/build/ggml/src/ggml-cuda/ggml-cuda.vcxproj" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($proj) {
+        $total = (Select-String -Path $proj.FullName -Pattern "<CudaCompile Include=").Count
+        $done = @(Get-ChildItem (Join-Path $proj.DirectoryName "ggml-cuda.dir/Release/*.obj") -ErrorAction SilentlyContinue).Count
+        if ($total -gt 0 -and $done -lt $total) { $line += ", whisper.cpp CUDA kernels: $done of $total files" }
+    }
+    Write-Host $line
+}
+if ($cargo.ExitCode -ne 0) { throw "cargo build failed ($($cargo.ExitCode))" }
 
 $Out = Join-Path $Root "build/out"
 $App = Join-Path $Out "ValoLights"
