@@ -64,7 +64,7 @@ jobs:
             assets/audio/*.onnx
             assets/audio/LICENSE-yamnet.txt
             build/tools
-          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
+          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1', 'tools/rife/**') }}
 
       # whisper.cpp's CUDA kernels (vl-speech): compiler, runtime, cuBLAS and the Visual Studio integration.
       # NVIDIA's redistributable archives (SHA-256 from their manifest) unpacked where a normal install puts

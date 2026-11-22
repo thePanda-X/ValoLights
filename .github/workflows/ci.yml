@@ -58,7 +58,7 @@ jobs:
             assets/audio/*.onnx
             assets/audio/LICENSE-yamnet.txt
             build/tools
-          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
+          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1', 'tools/rife/**') }}
       - name: Fetch ffmpeg, mpv, RIFE, models and libclang
         shell: powershell
         run: ./tools/fetch_binaries.ps1
@@ -72,7 +72,7 @@ jobs:
             assets/audio/*.onnx
             assets/audio/LICENSE-yamnet.txt
             build/tools
-          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1') }}
+          key: binaries-${{ hashFiles('tools/fetch_binaries.ps1', 'tools/rife/**') }}
       - name: Unit tests
         run: cargo test --release --workspace --exclude vl-speech
       # the speech helper without CUDA (the release build has CUDA; CI runners have no GPU)
