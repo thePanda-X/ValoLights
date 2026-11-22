@@ -6,6 +6,8 @@ All notable changes to ValoLights are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
 ### Changed
 
 - Super smooth "Fast" and "HD subtle" export about twice as fast with the same look: the AI interpolator now

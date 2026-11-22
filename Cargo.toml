@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/vl-core", "crates/vl-engine", "crates/vl-render", "crates/vl-app", "crates/vl-speech"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 authors = ["thePanda-X"]
