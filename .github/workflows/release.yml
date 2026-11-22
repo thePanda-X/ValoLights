@@ -103,6 +103,30 @@ jobs:
           "$cuda\bin\x64" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           & "$cuda\bin\nvcc.exe" --version
 
+      # nvcc has to work with the MSVC toolset that builds whisper.cpp's CUDA kernels. Runner image
+      # win25-vs2026 20261116 made MSVC 14.52 the default, and CUDA 13.2's front end crashes with it (cudafe++
+      # 0xC0000005). Compile a small kernel with each toolset on the runner, newest first, and pin the first one
+      # that works: MSBuild takes VCToolsVersion from the environment (outside a developer command prompt).
+      - name: MSVC toolset for CUDA
+        shell: powershell
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vcvars = "$vs\VC\Auxiliary\Build\vcvars64.bat"
+          $tools = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Where-Object { Test-Path "$($_.FullName)\bin\Hostx64\x64\cl.exe" } | Sort-Object { [version]$_.Name } -Descending
+          Write-Host "MSVC toolsets with cl.exe: $($tools.Name -join ', ')"
+          $dir = Join-Path $env:RUNNER_TEMP "cuda-probe"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Set-Content -Encoding ascii "$dir\probe.cu" "#include <cstdio>`n__global__ void k(float* x) { x[threadIdx.x] *= 2.0f; }`nint main() { std::printf(`"ok\n`"); return 0; }"
+          $pick = $null
+          foreach ($t in $tools) {
+            $out = cmd /c "`"$vcvars`" -vcvars_ver=$($t.Name) >nul 2>&1 && nvcc --use-local-env -c `"$dir\probe.cu`" -o `"$dir\probe.obj`" 2>&1"
+            if ($LASTEXITCODE -eq 0) { $pick = $t.Name; break }
+            Write-Host "MSVC $($t.Name): nvcc failed: $(($out | Select-Object -Last 3) -join ' | ')"
+          }
+          if (-not $pick) { throw "no MSVC toolset on the runner works with this CUDA" }
+          Write-Host "CUDA host compiler: MSVC $pick"
+          "VCToolsVersion=$pick" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
       # CMake caches from the build cache that point at compilers the runner image no longer has: whisper.cpp's
       # CMakeCache.txt kept MSVC 14.51 paths after the image moved to 14.52, and CMake doesn't look again. Same as
       # tools/ci_stale_cmake.ps1 (used by CI), written out here because runs given an older tag check out code
