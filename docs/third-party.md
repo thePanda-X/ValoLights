@@ -8,7 +8,7 @@ redistributes these components, each under its own licence. Licence texts ship i
 |---|---|---|---|
 | [FFmpeg](https://ffmpeg.org/) 9.0.2, gyan.dev "essentials" build | decoding, encoding, filters | GPL-3.0 (this build) | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), [GyanD/codexffmpeg](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2) |
 | [libmpv](https://mpv.io/) (shinchiro build 20261111) | video playback in the editor | GPL-2.0-or-later (this build) | [mpv-player/mpv](https://github.com/mpv-player/mpv), [shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261111) |
-| [rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan) 20221029 with the RIFE v4.6 model | AI frame interpolation (super smooth) | MIT | [nihui/rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan) |
+| [rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan) 20221029 with the RIFE v4.6 model, built from source with `tools/rife/jobs.patch` (interpolate only listed time steps) | AI frame interpolation (super smooth) | MIT | [nihui/rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan) |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) via [whisper-rs](https://github.com/tazz4843/whisper-rs) | voice-chat transcription | MIT / Unlicense | — |
 | Whisper large-v3-turbo / small / base (ggml) | speech models, downloaded on first use | MIT | [ggerganov/whisper.cpp on Hugging Face](https://huggingface.co/ggerganov/whisper.cpp) |
 | NVIDIA CUDA runtime and cuBLAS 13 | GPU speech-to-text | NVIDIA CUDA EULA (redistributable components) | [NVIDIA](https://docs.nvidia.com/cuda/eula/) |

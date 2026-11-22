@@ -6,6 +6,11 @@ All notable changes to ValoLights are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Super smooth "Fast" and "HD subtle" export about twice as fast with the same look: the AI interpolator now
+  makes only the in-between frames the motion blur actually uses.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added

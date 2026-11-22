@@ -4,8 +4,10 @@
 //! frames); "fast" and "subtle" (HD subtle) use AI frame interpolation as below with 4 or 8 sub-frames;
 //! "custom" takes the method, samples and shutter from `SmoothCustom`. The AI path:
 //!
-//! 1. RIFE v4.6 (rife-ncnn-vulkan, GPU via Vulkan) interpolates the gameplay to ~8 sub-frames per output frame.
-//! 2. Sub-frames are blended back to the output rate over a ~180-degree shutter with tent weights.
+//! 1. The gameplay is sampled on a grid of ~8 sub-frames per output frame; each output frame blends the
+//!    sub-frames of a ~180-degree shutter with tent weights (`Sampler`).
+//! 2. RIFE v4.6 (rife-ncnn-vulkan, GPU via Vulkan) makes only those sub-frames: our build's `-T` job list
+//!    (tools/rife/jobs.patch) skips the rest of the grid, roughly half of the work.
 //! 3. Blending happens in linear light (sRGB -> linear -> blend -> sRGB).
 //! 4. Hard cuts are detected and never interpolated across.
 //! 5. Only the gameplay layer is processed; overlays are composited afterwards and stay crisp.
@@ -79,15 +81,101 @@ fn count_png(d: &Path) -> usize {
     std::fs::read_dir(d).map(|rd| rd.flatten().filter(|e| e.path().extension().map(|x| x == "png").unwrap_or(false)).count()).unwrap_or(0)
 }
 
-/// One chunk of source frames on disk (`<dir>/in/*.png`), with the cuts that must not be interpolated.
-struct Chunk {
-    dir: PathBuf,
-    n: usize,
-    first: bool,
-    cuts: std::collections::HashSet<usize>,
+/// Where one blended sample comes from, in a chunk: a source frame, or the i-th RIFE job's output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Sample {
+    Frame(usize),
+    Rife(usize),
 }
 
-fn write_chunk(work: &Path, idx: usize, frames: &[BgrImage], first: bool) -> Result<Chunk> {
+/// Which sub-frames each output frame blends.
+///
+/// The gameplay is sampled on a grid of `m` sub-frames per source frame (`hi_fps` of them per second). Output frame
+/// `o` blends the `k` sub-frames ending at the last one ffmpeg's `fps` filter (round to nearest) would have kept
+/// for it, `n * out / hi < o + 0.5`, so it looks exactly like blending the whole grid and then dropping frames.
+#[derive(Debug, Clone)]
+pub struct Sampler {
+    pub m: usize,
+    pub hi_fps: i64,
+    pub out_fps: f64,
+    pub k: usize,
+    /// output frames to make
+    pub n_out: usize,
+}
+
+impl Sampler {
+    pub fn new(in_fps: f64, out_fps: f64, dur: f64, p: &SmoothParams) -> Sampler {
+        let (m, hi_fps, k) = blend_window(in_fps, out_fps, p);
+        let n_out = 1.max((dur * out_fps - 1e-6).ceil() as usize);
+        Sampler { m, hi_fps, out_fps, k, n_out }
+    }
+
+    /// Grid index of sample `s` (output `s / k`, oldest sample first).
+    pub fn grid(&self, s: usize) -> usize {
+        let (o, j) = (s / self.k, s % self.k);
+        let last = ((o as f64 + 0.5) * self.hi_fps as f64 / self.out_fps - 1e-9).floor() as i64;
+        (last - (self.k - 1 - j) as i64).max(0) as usize
+    }
+
+    /// Source frames two chunks share, so every output's samples fit inside one chunk.
+    pub fn overlap(&self) -> usize {
+        1 + (self.k - 1).div_ceil(self.m)
+    }
+
+    /// Plan the outputs that can be made from source frames `base..base+n` (`last`: no frames follow), starting at
+    /// output `*next`, which is advanced. Returns the samples in feed order and the RIFE jobs (pair, sub-frame),
+    /// each interpolated once. Pairs in `cuts` are never interpolated across: the nearer source frame stands in.
+    pub fn plan(
+        &self,
+        next: &mut usize,
+        base: usize,
+        n: usize,
+        cuts: &std::collections::HashSet<usize>,
+        last: bool,
+    ) -> (Vec<Sample>, Vec<(usize, usize)>) {
+        let (m, k) = (self.m, self.k);
+        let mut samples = vec![];
+        let mut jobs: Vec<(usize, usize)> = vec![];
+        let mut job_of = std::collections::HashMap::new();
+        while *next < self.n_out {
+            let grid: Vec<usize> = (0..k).map(|j| self.grid(*next * k + j)).collect();
+            // the newest sample needs frames up to here (one frame for an exact source frame, else the pair)
+            let need = grid.iter().map(|g| g / m + usize::from(g % m != 0)).max().unwrap_or(0);
+            if !last && need >= base + n {
+                break;
+            }
+            for g in grid {
+                let (i, r) = ((g / m).saturating_sub(base), g % m);
+                let smp = if n < 2 || i >= n - 1 {
+                    Sample::Frame(i.min(n - 1)) // the end of the source: hold the last frame
+                } else if r == 0 {
+                    Sample::Frame(i)
+                } else if cuts.contains(&i) {
+                    Sample::Frame(if (r as f64) < m as f64 / 2.0 { i } else { i + 1 })
+                } else {
+                    Sample::Rife(*job_of.entry((i, r)).or_insert_with(|| {
+                        jobs.push((i, r));
+                        jobs.len() - 1
+                    }))
+                };
+                samples.push(smp);
+            }
+            *next += 1;
+        }
+        (samples, jobs)
+    }
+}
+
+/// One chunk of source frames on disk (`<dir>/in/*.png`) and the samples planned from it.
+struct Chunk {
+    dir: PathBuf,
+    samples: Vec<Sample>,
+    jobs: Vec<(usize, usize)>,
+    /// output frames finished once this chunk is fed
+    outputs_done: usize,
+}
+
+fn write_chunk(work: &Path, idx: usize, frames: &[BgrImage]) -> Result<(PathBuf, std::collections::HashSet<usize>)> {
     let dir = work.join(format!("c{idx:05}"));
     let _ = std::fs::remove_dir_all(&dir);
     let cin = dir.join("in");
@@ -98,45 +186,50 @@ fn write_chunk(work: &Path, idx: usize, frames: &[BgrImage], first: bool) -> Res
     let n = frames.len();
     let smalls: Vec<Vec<i16>> = frames.iter().map(small).collect();
     let cuts = (0..n.saturating_sub(1)).filter(|&i| is_cut(&smalls[i], &smalls[i + 1])).collect();
-    Ok(Chunk { dir, n, first, cuts })
+    Ok((dir, cuts))
 }
 
-/// RIFE on one chunk; the sorted output frames (empty for a single-frame chunk).
+/// RIFE on one chunk's jobs; their output frames in job order.
 fn run_rife(c: &Chunk, m: usize) -> Result<Vec<PathBuf>> {
     let (cin, cout) = (c.dir.join("in"), c.dir.join("out"));
-    let n = c.n;
-    if n >= 2 {
-        // transient Vulkan/driver hiccups happen (e.g. another app grabbing the GPU): retry with
-        // fewer threads before giving up on the render
-        let mut ok = false;
-        let mut last_err = String::new();
-        for jobs in ["2:6:6", "1:2:2", "1:1:1"] {
-            let _ = std::fs::remove_dir_all(&cout);
-            std::fs::create_dir_all(&cout)?;
-            let o = ff::command(&rife_exe().to_string_lossy())
-                .args(["-i", &cin.to_string_lossy(), "-o", &cout.to_string_lossy(), "-n", &(n * m).to_string(), "-m"])
-                .arg(rife_dir().join("rife-v4.6"))
-                .args(["-g", "0", "-j", jobs, "-f", "png"])
-                .stdin(Stdio::null())
-                .output()?;
-            if o.status.success() && count_png(&cout) > (n - 1) * m {
-                ok = true;
-                break;
-            }
-            let e = String::from_utf8_lossy(&o.stderr);
-            last_err = format!("code {}: {}", o.status.code().unwrap_or(-1), &e[e.len().saturating_sub(300)..]);
-            log::warn!("RIFE chunk failed ({last_err}, threads {jobs}), retrying");
-        }
-        if !ok {
-            bail!("frame interpolation failed ({last_err})");
-        }
-    } else {
-        std::fs::create_dir_all(&cout)?;
+    std::fs::create_dir_all(&cout)?;
+    if c.jobs.is_empty() {
+        return Ok(vec![]);
     }
-    let mut outs: Vec<PathBuf> =
-        std::fs::read_dir(&cout)?.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "png").unwrap_or(false)).collect();
-    outs.sort();
-    Ok(outs)
+    let list = c.dir.join("jobs.txt");
+    std::fs::write(
+        &list,
+        c.jobs
+            .iter()
+            .map(|(i, r)| {
+                format!(
+                    "{i} {r} {m}
+"
+                )
+            })
+            .collect::<String>(),
+    )?;
+    // transient Vulkan/driver hiccups happen (e.g. another app grabbing the GPU): retry with
+    // fewer threads before giving up on the render
+    let mut last_err = String::new();
+    for threads in ["2:6:6", "1:2:2", "1:1:1"] {
+        let _ = std::fs::remove_dir_all(&cout);
+        std::fs::create_dir_all(&cout)?;
+        let o = ff::command(&rife_exe().to_string_lossy())
+            .args(["-i", &cin.to_string_lossy(), "-o", &cout.to_string_lossy(), "-T", &list.to_string_lossy(), "-m"])
+            .arg(rife_dir().join("rife-v4.6"))
+            .args(["-g", "0", "-j", threads, "-f", "png"])
+            .stdin(Stdio::null())
+            .output()?;
+        if o.status.success() && count_png(&cout) == c.jobs.len() {
+            // named 1, 2, ... in job order
+            return Ok((1..=c.jobs.len()).map(|j| cout.join(format!("{j:08}.png"))).collect());
+        }
+        let e = String::from_utf8_lossy(&o.stderr);
+        last_err = format!("code {}: {}", o.status.code().unwrap_or(-1), &e[e.len().saturating_sub(300)..]);
+        log::warn!("RIFE chunk failed ({last_err}, threads {threads}), retrying");
+    }
+    bail!("frame interpolation failed ({last_err})")
 }
 
 fn write_png(img: &BgrImage, p: &Path) -> Result<()> {
@@ -165,13 +258,25 @@ pub fn rife_works() -> (bool, String) {
                 let img = BgrImage::from_raw(64, 64, vec![*v; 64 * 64 * 3]);
                 write_png(&img, &work.join("in").join(format!("{i:08}.png")))?;
             }
+            // the way renders call it: a job list (-T, our patched build), here two in-between frames
+            let list = work.join("jobs.txt");
+            std::fs::write(
+                &list,
+                "0 1 4
+0 3 4
+",
+            )?;
             let out = ff::command(&exe.to_string_lossy())
-                .args(["-i", &work.join("in").to_string_lossy(), "-o", &work.join("out").to_string_lossy(), "-n", "4", "-m"])
+                .args(["-i", &work.join("in").to_string_lossy(), "-o", &work.join("out").to_string_lossy(), "-T", &list.to_string_lossy()])
+                .arg("-m")
                 .arg(rife_dir().join("rife-v4.6"))
                 .args(["-f", "png"])
                 .stdin(Stdio::null())
                 .output()?;
-            Ok(out.status.success() && count_png(&work.join("out")) == 4)
+            if String::from_utf8_lossy(&out.stderr).contains("Usage:") {
+                bail!("the frame interpolator in the bin folder is an old build (no -T option)");
+            }
+            Ok(out.status.success() && count_png(&work.join("out")) == 2)
         })();
         let _ = std::fs::remove_dir_all(&work);
         match res {
@@ -247,13 +352,15 @@ pub fn blend_window(in_fps: f64, out_fps: f64, p: &SmoothParams) -> (usize, i64,
     (m, round_i(hi), k)
 }
 
+/// The blend for input that carries `k` samples per output frame (at `out_fps * k`): each group of `k` becomes one
+/// frame, weighted with a tent.
 pub fn blend_filter(k: usize, out_fps: f64, params: &str) -> String {
     let w = tent_weights(k).iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ");
     // sRGB -> linear light, blend, back to sRGB (all in RGB, primaries pinned), then BT.709 YUV
     format!(
-        "zscale=pin=709:p=709:tin=iec61966-2-1:t=linear:npl=100,format=gbrpf32le,tmix=frames={k}:weights='{w}',\
-         zscale=pin=709:p=709:tin=linear:t=iec61966-2-1,format=gbrp,\
-         scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,fps={}{}",
+        "zscale=pin=709:p=709:tin=iec61966-2-1:t=linear:npl=100,format=gbrpf32le,tmix=frames={k}:weights='{w}',         select='eq(mod(n,{k}),{})',setpts=N/({}*TB),         zscale=pin=709:p=709:tin=linear:t=iec61966-2-1,format=gbrp,         scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,fps={}{}",
+        k - 1,
+        num(out_fps),
         num(out_fps),
         if params.is_empty() { String::new() } else { format!(",{params}") }
     )
@@ -329,14 +436,16 @@ pub fn smooth_part(
     if params.flow {
         return crate::vecblur::blur_part(src, start, dur, crop, in_fps, out_fps, params, out, progress, cancel);
     }
-    let (m, hi_fps, k) = blend_window(in_fps, out_fps, params);
+    let sampler = Sampler::new(in_fps, out_fps, dur, params);
+    let (m, k) = (sampler.m, sampler.k);
     let stem = out.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let work = out.parent().unwrap_or(Path::new(".")).join(format!("{stem}_frames"));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work)?;
+    // k samples per output frame, blended group by group
     let mut args: Vec<String> =
         ["-hide_banner", "-v", "error", "-y", "-f", "image2pipe", "-framerate"].iter().map(|s| s.to_string()).collect();
-    args.push(hi_fps.to_string());
+    args.push(num(out_fps * k as f64));
     args.extend(["-c:v", "png", "-i", "-", "-vf"].iter().map(|s| s.to_string()));
     args.push(blend_filter(k, out_fps, &source_params(src)));
     args.extend(encoder_args().iter().map(|s| s.to_string()));
@@ -351,12 +460,12 @@ pub fn smooth_part(
         String::from_utf8_lossy(&s).into_owned()
     });
     let stdin = sink.stdin.take();
-    let total = 1.max((dur * in_fps) as usize);
+    let total = sampler.n_out;
 
-    // Three stages overlap (same frames, same order, same output as running them one after another):
-    //   this thread: decode a chunk and write its PNGs  ->  RIFE thread (GPU)  ->  feeder thread (ffmpeg blend
-    //   + encode). RIFE is the slow step; decoding, writing and feeding now happen while it runs instead of
-    //   between its runs. At most three chunks exist on disk at once.
+    // Three stages overlap: this thread decodes a chunk, writes its PNGs and plans which sub-frames its output
+    // frames blend -> RIFE thread (GPU) makes only the in-between frames in that plan -> feeder thread sends the
+    // samples to ffmpeg (blend + encode). RIFE is the slow step; the rest happens while it runs. At most three
+    // chunks exist on disk at once.
     let done = std::sync::atomic::AtomicUsize::new(0);
     let result = std::thread::scope(|scope| -> Result<()> {
         let (rife_tx, rife_rx) = std::sync::mpsc::sync_channel::<Chunk>(1);
@@ -380,20 +489,14 @@ pub fn smooth_part(
             for (c, outs) in feed_rx {
                 let outs = outs?;
                 let cin = c.dir.join("in");
-                let n = c.n;
-                // output j sits at timestep j/m; keep positions 0..n-1 (later outputs duplicate the last frame)
-                let end = (n.saturating_sub(1)) * m + 1;
-                for j in (if c.first { 0 } else { 1 })..end {
-                    let (i, r) = (j / m, j % m);
-                    if r == 0 || c.cuts.contains(&i) || n < 2 || j >= outs.len() {
-                        let src_i = if r != 0 { (n - 1).min(if (r as f64) < m as f64 / 2.0 { i } else { i + 1 }) } else { i };
-                        feed(&cin.join(format!("{src_i:08}.png")))?;
-                    } else {
-                        feed(&outs[j])?;
+                for smp in &c.samples {
+                    match *smp {
+                        Sample::Frame(i) => feed(&cin.join(format!("{i:08}.png")))?,
+                        Sample::Rife(j) => feed(&outs[j])?,
                     }
                 }
                 let _ = std::fs::remove_dir_all(&c.dir);
-                done_ref.fetch_add(c.n.saturating_sub(if c.first { 0 } else { 1 }), std::sync::atomic::Ordering::Relaxed);
+                done_ref.store(c.outputs_done, std::sync::atomic::Ordering::Relaxed);
             }
             Ok(())
         });
@@ -409,32 +512,35 @@ pub fn smooth_part(
                 matrix: Some(MATRIX.into()),
                 ..Default::default()
             };
+            let overlap = sampler.overlap();
             let mut buf: Vec<BgrImage> = vec![];
-            let mut first = true;
+            let mut base = 0usize; // source index of buf[0]
+            let mut next = 0usize; // next output frame to plan
             let mut idx = 0usize;
-            let send = |frames: &[BgrImage], first: bool, idx: usize| -> Result<()> {
-                let c = write_chunk(&work, idx, frames, first)?;
-                rife_tx.send(c).map_err(|_| anyhow!("frame interpolation stopped"))
+            let mut send = |frames: &[BgrImage], base: usize, last: bool, idx: usize| -> Result<()> {
+                let (dir, cuts) = write_chunk(&work, idx, frames)?;
+                let (samples, jobs) = sampler.plan(&mut next, base, frames.len(), &cuts, last);
+                rife_tx.send(Chunk { dir, samples, jobs, outputs_done: next }).map_err(|_| anyhow!("frame interpolation stopped"))
             };
             for fr in ff::read_frames(Path::new(src), opts, Some(cancel.0.clone()))? {
                 if cancel.is_set() {
                     bail!(vl_core::jobs::Cancelled);
                 }
                 buf.push(fr?.img);
-                if buf.len() == CHUNK_FRAMES + 1 {
-                    send(&buf, first, idx)?;
-                    first = false;
+                if buf.len() == CHUNK_FRAMES + overlap {
+                    send(&buf, base, false, idx)?;
                     idx += 1;
                     progress((done.load(std::sync::atomic::Ordering::Relaxed) as f64 / total as f64).min(0.99));
-                    let last = buf.pop().unwrap();
-                    buf = vec![last]; // overlap: the next chunk starts on this frame
+                    // the next chunk starts on the last `overlap` frames of this one
+                    base += buf.len() - overlap;
+                    buf.drain(..buf.len() - overlap);
                 }
             }
             if cancel.is_set() {
                 bail!(vl_core::jobs::Cancelled);
             }
-            if buf.len() > if first { 0 } else { 1 } {
-                send(&buf, first, idx)?;
+            if !buf.is_empty() {
+                send(&buf, base, true, idx)?;
             }
             Ok(())
         })();
@@ -508,6 +614,64 @@ mod tests {
         let (a, b, c) = (f.find("t=linear").unwrap(), f.find("tmix").unwrap(), f.find("t=iec61966-2-1").unwrap());
         assert!(a < b && b < c);
         assert!(f.contains("weights='1 2 2 1'") && f.ends_with("fps=60"));
+        // one blended frame per group of 4 samples
+        assert!(f.contains("select='eq(mod(n,4),3)'"));
+    }
+
+    fn sampler(in_fps: f64, out_fps: f64, dur: f64, amount: &str) -> Sampler {
+        Sampler::new(in_fps, out_fps, dur, &pr(amount))
+    }
+
+    #[test]
+    fn sampler_matches_what_ffmpeg_fps_kept() {
+        // ffmpeg's fps filter (round to nearest) keeps grid frames 3, 11, 19 at 480 -> 60, 7, 23 at 480 -> 30,
+        // 1, 5, 9 at 240 -> 60 and 4, 12, 20 at 480 -> 59.94 (checked against ffmpeg 9): each output blends the
+        // k frames ending there
+        let last = |s: &Sampler, o: usize| s.grid(o * s.k + s.k - 1);
+        let s = sampler(60.0, 60.0, 1.0, "subtle");
+        assert_eq!((0..3).map(|o| last(&s, o)).collect::<Vec<_>>(), vec![3, 11, 19]);
+        assert_eq!((0..4).map(|j| s.grid(8 + j)).collect::<Vec<_>>(), vec![16, 17, 18, 19]);
+        let s = sampler(60.0, 30.0, 1.0, "subtle"); // m 4, hi 240, k 4
+        assert_eq!((0..3).map(|o| last(&s, o)).collect::<Vec<_>>(), vec![3, 11, 19]);
+        let s = sampler(60.0, 60.0, 1.0, "fast");
+        assert_eq!((0..3).map(|o| last(&s, o)).collect::<Vec<_>>(), vec![1, 5, 9]);
+        let s = Sampler { m: 8, hi_fps: 480, out_fps: 59.94, k: 4, n_out: 10 };
+        assert_eq!((0..3).map(|o| last(&s, o)).collect::<Vec<_>>(), vec![4, 12, 20]);
+        // the start holds frame 0 when the window reaches before it
+        let s = Sampler { m: 8, hi_fps: 480, out_fps: 60.0, k: 6, n_out: 10 };
+        assert_eq!((0..6).map(|j| s.grid(j)).collect::<Vec<_>>(), vec![0, 0, 0, 1, 2, 3]);
+        assert_eq!(sampler(60.0, 60.0, 5.0, "subtle").n_out, 300);
+    }
+
+    #[test]
+    fn plan_interpolates_only_used_sub_frames() {
+        let s = sampler(60.0, 60.0, 1.0, "subtle"); // 8 sub-frames, 4 blended: the source frame and 1/8..3/8
+        let none = Default::default();
+        let mut next = 0;
+        let (samples, jobs) = s.plan(&mut next, 0, 4, &none, false);
+        // frames 0..3 are on disk: pairs 0-1, 1-2 and 2-3 can be made, output 3 needs frame 4
+        assert_eq!(next, 3);
+        assert_eq!(jobs, vec![(0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3)]);
+        assert_eq!(&samples[..4], &[Sample::Frame(0), Sample::Rife(0), Sample::Rife(1), Sample::Rife(2)]);
+        // the next chunk starts `overlap` frames back and goes on from output 3, numbering frames locally
+        assert_eq!(s.overlap(), 2);
+        let (samples, jobs) = s.plan(&mut next, 2, 4, &none, false);
+        assert_eq!(next, 5);
+        assert_eq!(jobs[0], (1, 1)); // global pair 3-4
+        assert_eq!(samples[0], Sample::Frame(1));
+    }
+
+    #[test]
+    fn plan_never_interpolates_across_a_cut_and_holds_the_end() {
+        let s = sampler(60.0, 60.0, 1.0, "subtle");
+        let cuts = [0usize].into_iter().collect();
+        let mut next = 0;
+        let (samples, jobs) = s.plan(&mut next, 0, 2, &cuts, true);
+        assert!(jobs.is_empty());
+        // across the cut the nearer frame stands in (1/8..3/8 -> frame 0); past the last frame it is held
+        assert_eq!(&samples[..4], &[Sample::Frame(0); 4]);
+        assert!(samples[4..].iter().all(|x| *x == Sample::Frame(1)));
+        assert_eq!(next, s.n_out);
     }
 
     #[test]

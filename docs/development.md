@@ -13,7 +13,9 @@ ValoLights is a Rust workspace. Windows is the only supported platform today; th
   NVIDIA GPU. Without CUDA you can still build everything with the speech helper on the CPU (see below).
 
 Everything else (ffmpeg, libmpv, the RIFE frame interpolator, the OCR and sound models, libclang) is downloaded
-by one script into `bin\`, `assets\` and `build\tools\` (all git-ignored), pinned and SHA-256 checked:
+by one script into `bin\`, `assets\` and `build\tools\` (all git-ignored), pinned and SHA-256 checked. The RIFE
+exe is the exception: the script builds it from the pinned upstream source plus `tools\rife\jobs.patch` (needs git,
+CMake and the C++ build tools above; a few minutes, once):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\fetch_binaries.ps1
