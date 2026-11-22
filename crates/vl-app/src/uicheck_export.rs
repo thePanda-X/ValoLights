@@ -378,7 +378,7 @@ impl CheckApp {
                 }
                 let s = w.export.status.clone();
                 k.ok("progress text names the file and shows percent", s.contains("qa cancel.mp4") && s.contains('%'), s.clone());
-                k.ok("progress shows the time left", s.contains("s left"), s.clone());
+                k.ok("progress shows the time left", s.contains(" left"), s.clone());
                 k.shot(ctx, "03_rendering");
                 let tmp = a_out.join("qa cancel.rendering.mp4");
                 let ok = tmp.exists() || !ffmpeg_for("qa cancel.rendering").is_empty();

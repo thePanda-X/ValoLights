@@ -187,7 +187,7 @@ impl CheckApp {
                 let lbl = time_label(&w.st, &s0);
                 k.ok(
                     "caption times shown in edit time",
-                    (w.subs.ed_start - r.0).abs() < 0.01 && lbl.starts_with("0:0") && w.subs.sel == 0,
+                    (w.subs.ed_start - r.0).abs() < 0.01 && lbl.starts_with("00:0") && w.subs.sel == 0,
                     format!("start box {:.2}, edit start {:.2}, source {}, row {lbl:?}", w.subs.ed_start, r.0, s0.start),
                 );
                 k.shot(ctx, "subs_01_loaded");

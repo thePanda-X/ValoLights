@@ -27,11 +27,9 @@ const HEADER_H: f32 = 32.0;
 /// table column widths (toggle, time, voice; the caption takes the rest)
 const COLS: [f32; 3] = [40.0, 132.0, 110.0];
 
-/// "m:ss.ss".
+/// "mm:ss.ss" ("hh:mm:ss.ss" from an hour).
 fn fmt_t(v: f64) -> String {
-    let v = v.max(0.0);
-    let (m, s) = ((v / 60.0).floor(), v.rem_euclid(60.0));
-    format!("{}:{:05.2}", m as i64, s)
+    crate::timefmt::clock(v, 2)
 }
 
 /// `_t(v)[:-1]`: one decimal, truncated.
@@ -1054,7 +1052,7 @@ impl SubtitlesPage {
             ui::section(ui, "Caption");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some(s) = &seg {
-                    ui::label(ui, format!("{:.2} s", s.end - s.start), Role::Mono);
+                    ui::label(ui, crate::timefmt::dur(s.end - s.start, 2), Role::Mono);
                 }
             });
         });
@@ -1507,13 +1505,13 @@ impl SubtitlesPage {
     }
 }
 
-/// Seconds field (2 decimals, " s", left-aligned, no keyboard tracking): the value
-/// is applied on Enter or when the field loses focus; Up/Down and the mouse wheel step 0.05 s.
+/// Time field ("mm:ss.ss", hours from an hour; left-aligned, no keyboard tracking): the value is applied on Enter
+/// or when the field loses focus, typed as a time or in seconds; Up/Down and the mouse wheel step 0.05 s.
 fn time_spin(ui: &mut Ui, salt: &str, value: f64, width: f32, tip: &str) -> Option<f64> {
     let id = ui.make_persistent_id(("subs-time", salt));
     let te_id = id.with("te");
     let focused = ui.memory(|m| m.has_focus(te_id));
-    let shown = format!("{value:.2} s");
+    let shown = crate::timefmt::clock(value, 2);
     let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone()) } else { shown.clone() };
     let mut out = None;
     let step = |v: f64, k: f64| ((v + 0.05 * k) * 100.0).round() / 100.0;
@@ -1523,7 +1521,7 @@ fn time_spin(ui: &mut Ui, salt: &str, value: f64, width: f32, tip: &str) -> Opti
         });
         if up + down > 0 {
             let v = step(value, up as f64 - down as f64).max(0.0);
-            buf = format!("{v:.2} s");
+            buf = crate::timefmt::clock(v, 2);
             out = Some(v);
         }
     }
@@ -1553,13 +1551,12 @@ fn time_spin(ui: &mut Ui, salt: &str, value: f64, width: f32, tip: &str) -> Opti
         if wheel != 0.0 {
             ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
             let v = step(out.unwrap_or(value), wheel.signum() as f64).max(0.0);
-            buf = format!("{v:.2} s");
+            buf = crate::timefmt::clock(v, 2);
             out = Some(v);
         }
     }
     if r.lost_focus() && !ui.input(|i| i.key_pressed(Key::Escape)) {
-        let t = buf.trim().trim_end_matches('s').trim().replace(',', ".");
-        if let Ok(v) = t.parse::<f64>() {
+        if let Some(v) = crate::timefmt::parse(&buf) {
             let v = r2(v.clamp(0.0, 1e6));
             if (v - value).abs() > 1e-9 {
                 out = Some(v);
@@ -1748,9 +1745,10 @@ mod tests {
 
     #[test]
     fn time_formats() {
-        assert_eq!(fmt_t(0.25), "0:00.25");
-        assert_eq!(fmt_t1(3.33), "0:03.3");
-        assert_eq!(fmt_t1(75.56), "1:15.5");
-        assert_eq!(fmt_t(-1.0), "0:00.00");
+        assert_eq!(fmt_t(0.25), "00:00.25");
+        assert_eq!(fmt_t1(3.33), "00:03.3");
+        assert_eq!(fmt_t1(75.56), "01:15.5");
+        assert_eq!(fmt_t(-1.0), "00:00.00");
+        assert_eq!(fmt_t1(3725.56), "01:02:05.5");
     }
 }

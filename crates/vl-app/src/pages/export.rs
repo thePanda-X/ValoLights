@@ -73,13 +73,9 @@ pub fn rel(p: &Path) -> String {
     }
 }
 
-/// `{dur:.1f} s` below a minute, else "m:ss min".
+/// "17.2 s" below a minute, then "mm:ss" / "hh:mm:ss".
 fn fmt_len(dur: f64) -> String {
-    if dur < 60.0 {
-        format!("{dur:.1} s")
-    } else {
-        format!("{}:{:02} min", (dur / 60.0).floor() as i64, (dur % 60.0) as i64)
-    }
+    crate::timefmt::dur(dur, 1)
 }
 
 fn plural(n: usize, word: &str) -> String {
@@ -933,7 +929,7 @@ mod tests {
         assert_eq!(fmt_size(12_345_678), "12.3 MB");
         assert_eq!(fmt_size(1_050_000_000), "1.05 GB");
         assert_eq!(fmt_len(17.25), "17.2 s");
-        assert_eq!(fmt_len(75.9), "1:15 min");
+        assert_eq!(fmt_len(75.9), "01:16");
         assert_eq!(plural(1, "kill"), "1 kill");
         assert_eq!(plural(0, "part"), "0 parts");
     }

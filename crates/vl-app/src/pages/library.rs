@@ -16,14 +16,7 @@ pub const THUMB_H: f32 = 166.0; // 16:9 of the inner width
 pub const DROP_TEXT: &str = "Drop a Valorant recording here, or click to choose one";
 
 pub fn fmt_dur(s: f64) -> String {
-    let s = s.max(0.0) as i64;
-    let (m, s) = (s / 60, s % 60);
-    let (h, m) = (m / 60, m % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
+    crate::timefmt::dur(s, 0)
 }
 
 /// "Added" stamp so several takes of the same recording can be told apart.
@@ -571,8 +564,8 @@ mod tests {
 
     #[test]
     fn formats() {
-        assert_eq!(fmt_dur(58.4), "0:58");
-        assert_eq!(fmt_dur(3725.0), "1:02:05");
+        assert_eq!(fmt_dur(58.4), "58 s");
+        assert_eq!(fmt_dur(3725.0), "01:02:05");
         let now = chrono::NaiveDateTime::parse_from_str("2026-11-17T18:00:00", "%Y-%m-%dT%H:%M:%S").unwrap();
         assert_eq!(fmt_added("2026-11-17T10:08:46", now), "today 10:08");
         assert_eq!(fmt_added("2026-11-16T09:05:00", now), "yesterday 09:05");

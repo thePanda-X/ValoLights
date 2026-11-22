@@ -38,10 +38,9 @@ pub fn edl_url(src: &str, parts: &[(f64, f64)]) -> String {
     format!("edl://{}", items.join(";"))
 }
 
-/// "mm:ss.ss"
+/// "mm:ss.ss" ("hh:mm:ss.ss" from an hour)
 pub fn fmt_time(t: f64) -> String {
-    let t = if t.is_finite() { t.max(0.0) } else { 0.0 };
-    format!("{:02}:{:05.2}", (t / 60.0).floor() as i64, t % 60.0)
+    crate::timefmt::clock(t, 2)
 }
 
 /// Options of [`Player::load`].

@@ -450,7 +450,7 @@ impl TrimPage {
                         end: m.end,
                         title: m.reasons.join(" · "),
                         meta: ft[..ft.len() - 3].to_string(),
-                        sub: format!("{:.0} s · score {:.1}", m.end - m.start, m.score),
+                        sub: format!("{} · score {:.1}", crate::timefmt::dur(m.end - m.start, 0), m.score),
                     }
                 })
                 .collect()
@@ -743,7 +743,7 @@ impl TrimPage {
         let n = st.ed.parts.len();
         let name = quick_name(key);
         self.say_later(if n > 0 {
-            format!("{name} · {:.1} s kept", st.kept_duration())
+            format!("{name} · {} kept", crate::timefmt::dur(st.kept_duration(), 1))
         } else {
             format!("{name} keeps nothing in this clip")
         });
@@ -810,7 +810,7 @@ impl TrimPage {
             self.timeline.set_playhead(t, false);
         }
         st.set_parts(to_parts(&parts), true);
-        self.say_later(format!("Deleted a {:.1} s part · Ctrl+Z brings it back", b - a));
+        self.say_later(format!("Deleted a {} part · Ctrl+Z brings it back", crate::timefmt::dur(b - a, 1)));
     }
 
     pub fn add_part(&mut self, st: &mut AppState) {
@@ -840,7 +840,7 @@ impl TrimPage {
             let mut np = parts.clone();
             np.push((a, b));
             st.set_parts(to_parts(&np), true);
-            self.say_later(format!("Added {:.1} s at {}", b - a, fmt_time(t)));
+            self.say_later(format!("Added {} at {}", crate::timefmt::dur(b - a, 1), fmt_time(t)));
         } else {
             self.say("No room for a new part here", false);
         }
@@ -1381,7 +1381,7 @@ impl TrimPage {
                     ui.spacing_mut().item_spacing.x = S6;
                     ui::figure(ui, &self.stats.kills_kept.to_string(), "Kills kept");
                     ui::figure(ui, &self.stats.headshots.to_string(), "Headshots");
-                    ui::figure(ui, &format!("{:.1}s", self.stats.length), "Length");
+                    ui::figure(ui, &crate::timefmt::dur(self.stats.length, 1), "Length");
                 });
                 if let Some(h) = &st.h {
                     let s = &h.project.source;
@@ -1395,7 +1395,9 @@ impl TrimPage {
                     .stats
                     .quick
                     .iter()
-                    .map(|(k, n, d)| ChoiceRow::new(k.clone(), n.clone(), if *d < 0.0 { "new".to_string() } else { format!("{d:.1} s") }))
+                    .map(|(k, n, d)| {
+                        ChoiceRow::new(k.clone(), n.clone(), if *d < 0.0 { "new".to_string() } else { crate::timefmt::dur(*d, 1) })
+                    })
                     .collect();
                 let sel = if self.stats.custom { None } else { Some(st.ed.quick_cut.clone()) };
                 let top = ui.cursor().top();

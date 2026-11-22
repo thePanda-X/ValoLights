@@ -717,7 +717,7 @@ impl Timeline {
                 p.rect_filled(Rect::from_min_size(pos2(hx - 3.0, vr.center().y - hh / 2.0), vec2(6.0, hh)), 3.0, acc);
             }
             if xb - xa > 46.0 {
-                let tag = format!("{:.1}s", b - a);
+                let tag = crate::timefmt::dur(b - a, 1);
                 let g = p.layout_no_wrap(tag, mf.clone(), acc);
                 let tr = Rect::from_min_size(pos2(xa + 6.0, vr.top() + 6.0), vec2(g.size().x + 10.0, 16.0));
                 p.rect_filled(tr, 4.0, Color32::from_rgba_unmultiplied(15, 15, 16, 220));

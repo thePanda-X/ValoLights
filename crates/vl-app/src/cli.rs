@@ -44,7 +44,7 @@ fn cmd_update(install: bool) -> Result<i32> {
 }
 
 fn fmt_t(t: f64) -> String {
-    format!("{}:{:05.2}", (t / 60.0).floor() as i64, t.rem_euclid(60.0))
+    crate::timefmt::clock(t, 2)
 }
 
 /// A float with at least one decimal (1.0 stays "1.0").

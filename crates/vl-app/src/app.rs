@@ -330,7 +330,7 @@ impl MainWindow {
                     JobEvent::Progress { p, msg } => {
                         let eta = self.analysis_jobs.get(&pid).and_then(Job::eta);
                         let m = match eta {
-                            Some(e) if e as i64 > 0 => format!("{msg} · {} s left", e as i64),
+                            Some(e) if e as i64 > 0 => format!("{msg} · {} left", crate::timefmt::dur(e, 0)),
                             _ => msg,
                         };
                         self.library.progress(&pid, p, &m);
@@ -698,7 +698,7 @@ impl MainWindow {
         self.st.reload_events();
         self.st.apply_quick_cut("smart", true);
         let n = self.st.smart_moments().len();
-        let msg = format!("Smart cut · {n} moments, {:.1} s kept", self.st.kept_duration());
+        let msg = format!("Smart cut · {n} moments, {} kept", crate::timefmt::dur(self.st.kept_duration(), 1));
         self.notify_page("smart", None, msg, Some(r));
     }
 
@@ -764,7 +764,7 @@ impl MainWindow {
                 ("proxy", JobEvent::Finished(r)) => self.notify_page("proxy", None, "Preview ready · 540p".into(), Some(r)),
                 ("render", JobEvent::Progress { p, msg }) => {
                     let left = match eta {
-                        Some(e) if e as i64 > 0 => format!(" · about {} s left", e as i64),
+                        Some(e) if e as i64 > 0 => format!(" · about {} left", crate::timefmt::dur(e, 0)),
                         _ => String::new(),
                     };
                     self.notify_page("render", Some(p), format!("{msg} · {:.0}%{left}", p * 100.0), None);
@@ -1112,7 +1112,11 @@ impl MainWindow {
                 self.undo(right.ctx());
             }
             right.add_space(12.0);
-            ui::label(&mut right, format!("{:.1} s kept of {:.1} s", self.st.kept_duration(), self.st.duration()), Role::Mono);
+            ui::label(
+                &mut right,
+                format!("{} kept of {}", crate::timefmt::dur(self.st.kept_duration(), 1), crate::timefmt::dur(self.st.duration(), 1)),
+                Role::Mono,
+            );
             right.add_space(16.0);
         } else {
             self.undo_rect = Rect::NOTHING;

@@ -10,6 +10,8 @@ All notable changes to ValoLights are listed here. The format follows
 
 - Super smooth "Fast" and "HD subtle" export about twice as fast with the same look: the AI interpolator now
   makes only the in-between frames the motion blur actually uses.
+- Times are shown as seconds under a minute, then mm:ss, then hh:mm:ss (clip, export and kept lengths, time
+  left, timestamps). The subtitle Start/End fields also take typed times like 01:15.5.
 
 ### Fixed
 

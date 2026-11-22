@@ -22,6 +22,7 @@ mod speech;
 mod state;
 mod sys;
 mod theme;
+mod timefmt;
 mod uicheck;
 mod uicheck_export;
 mod uicheck_layout;
