@@ -6,12 +6,14 @@
 //! 1. Optical flow between neighbouring frames, forwards and backwards ([`crate::flow`], quarter or half
 //!    resolution).
 //! 2. A per-pixel confidence: does following the flow land on the same colour in the next frame? Things that
-//!    don't move with what's around them (the crosshair, HUD bits, edges being uncovered) get low confidence:
-//!    their own motion is damped, and other pixels' blur doesn't pick them up.
-//! 3. For every output frame, the shutter interval (e.g. half a frame, centred on the frame) is sampled at
+//!    don't move with what's around them (HUD bits, edges being uncovered) get low confidence: their own motion
+//!    is damped, and other pixels' blur doesn't pick them up.
+//! 3. The confidence is too coarse for a crosshair dot or thin HUD lines, so a full-resolution mask finds what
+//!    stays put on screen while the scene moves (`fixed_mask`): it stays sharp and out of other pixels' blur.
+//! 4. For every output frame, the shutter interval (e.g. half a frame, centred on the frame) is sampled at
 //!    a few points with tent weights. A sample at time `n + d` takes the colour from frame `n`, moved back
 //!    along the motion. The number of samples follows the motion length, so still pixels cost one read.
-//! 4. Everything is averaged in linear light, like the AI path, then converted back to sRGB.
+//! 5. Everything is averaged in linear light, like the AI path, then converted back to sRGB.
 //!
 //! "High detail" measures motion at half resolution and samples both neighbouring frames (true
 //! interpolation, also used when the output frame rate is higher than the source's).
@@ -36,6 +38,25 @@ const CONF_HI: f32 = 40.0;
 const CONF_SOFT: usize = 2;
 /// target spacing between blur samples along the motion, pixels
 const TAP_SPACING: f32 = 2.0;
+/// screen-fixed below this colour change (0-255, worst channel) against the neighbouring frames, not above `FIXED_HI`
+const FIXED_LO: f32 = 8.0;
+const FIXED_HI: f32 = 20.0;
+/// ... and following the scene's motion must change it by this much more (0-255), fully from `GAIN_HI`
+const GAIN_LO: f32 = 12.0;
+const GAIN_HI: f32 = 30.0;
+/// screen-fixed evidence is carried on while the pixel's colour changes less than `KEEP_LO` (fully) to `KEEP_HI`
+/// (not at all), and fades by this each time a test with motion doesn't confirm it
+const FIXED_FADE: f32 = 0.75;
+/// the scene must move at least this far (pixels per frame) for a neighbouring frame to say anything
+const FIXED_MOTION: f32 = 3.0;
+/// ... and the pixel must differ by this much (0-255) from one at `FIXED_RING` pixels in some direction
+const FIXED_CONTRAST: f32 = 24.0;
+const FIXED_RING: usize = 3;
+/// fixedness below this (0-255) counts as none; tile size of the coarse map of where there is any
+const FIXED_MIN: u8 = 13;
+const FIXED_TILE: usize = 16;
+const KEEP_LO: f32 = 24.0;
+const KEEP_HI: f32 = 40.0;
 
 static S2L: once_cell::sync::Lazy<[f32; 256]> = once_cell::sync::Lazy::new(|| {
     let mut t = [0f32; 256];
@@ -270,6 +291,14 @@ impl Motion {
         self.conf[yi * self.cw + xi]
     }
 
+    /// Like `at_row`, but the measured motion (not damped by the confidence).
+    #[inline]
+    fn raw_row(&self, x: usize, u: &[f32], v: &[f32]) -> (f32, f32) {
+        let (k0, k1, wx) = self.xmap[x];
+        let (k0, k1) = (k0 as usize, k1 as usize);
+        (u[k0] * (1.0 - wx) + u[k1] * wx, v[k0] * (1.0 - wx) + v[k1] * wx)
+    }
+
     /// The motion of full-res pixel (x, y), damped by its confidence.
     #[inline]
     fn at(&self, x: f32, y: f32) -> (f32, f32) {
@@ -434,21 +463,226 @@ fn sample_at(win: &Window, cfg: &BlurCfg, pm: &PixelMotion, x: usize, y: usize, 
     }
 }
 
+/// Screen-fixed evidence carried from frame to frame (see `fixed_mask`), 0..255.
+#[derive(Default)]
+pub struct FixedHistory {
+    /// source frame the values belong to
+    n: Option<usize>,
+    /// per pixel: [evidence, its horizontal 3-maximum] (see `fixed_mask`)
+    hist: Vec<[u8; 2]>,
+    /// the dilated mask of frame `n`; None without a neighbouring frame to compare with
+    mask: Option<FixedMask>,
+}
+
+/// A frame's screen-fixed mask (0..255 per full-res pixel), with a coarse map of the tiles that have any, so the
+/// blur's per-sample check is a cache-friendly lookup almost everywhere.
+struct FixedMask {
+    w: usize,
+    h: usize,
+    px: Vec<u8>,
+    /// per FIXED_TILE x FIXED_TILE tile: any value worth a look
+    tiles: Vec<bool>,
+    tw: usize,
+}
+
+impl FixedMask {
+    /// From `fixed_mask`'s rows: the vertical 3-maximum of the horizontal one (a 3x3 dilation), and the tile map,
+    /// a band of tiles at a time on all cores.
+    fn from_rows(rows: &[[u8; 2]], w: usize, h: usize) -> FixedMask {
+        use rayon::prelude::*;
+        let (tw, th) = (w.div_ceil(FIXED_TILE), h.div_ceil(FIXED_TILE));
+        let mut px = vec![0u8; w * h];
+        let mut tiles = vec![false; tw * th];
+        px.par_chunks_mut(w * FIXED_TILE).zip(tiles.par_chunks_mut(tw)).enumerate().for_each(|(band, (out, flags))| {
+            for (k, orow) in out.chunks_exact_mut(w).enumerate() {
+                let y = band * FIXED_TILE + k;
+                let a = &rows[y.saturating_sub(1) * w..][..w];
+                let b = &rows[y * w..][..w];
+                let c = &rows[(y + 1).min(h - 1) * w..][..w];
+                for (x, o) in orow.iter_mut().enumerate() {
+                    *o = a[x][1].max(b[x][1]).max(c[x][1]);
+                    if *o >= FIXED_MIN {
+                        flags[x / FIXED_TILE] = true;
+                    }
+                }
+            }
+        });
+        FixedMask { w, h, px, tiles, tw }
+    }
+
+    /// Fixedness of pixel (x, y), 0..1.
+    #[inline]
+    fn at(&self, x: usize, y: usize) -> f32 {
+        let v = self.px[y * self.w + x];
+        if v < FIXED_MIN {
+            0.0
+        } else {
+            // more likely fixed than not counts fully: a crosshair half-recognised during a flick (compression
+            // noise) would otherwise still leave faint copies of itself in the blur around it
+            (v as f32 / 128.0).min(1.0)
+        }
+    }
+
+    /// How much a blur sample at full-res (x, y) may count: not at all on screen-fixed pixels.
+    #[inline]
+    fn unfixed(&self, x: f32, y: f32) -> f32 {
+        let xi = (x.round().max(0.0) as usize).min(self.w - 1);
+        let yi = (y.round().max(0.0) as usize).min(self.h - 1);
+        if !self.tiles[(yi / FIXED_TILE) * self.tw + xi / FIXED_TILE] {
+            return 1.0;
+        }
+        1.0 - self.at(xi, yi)
+    }
+}
+
+/// Per full-res pixel of frame `n`, 0..255 (into `hist.mask`): how sure we are it is fixed on screen (a crosshair,
+/// HUD lines) while the scene behind it moves. The flow and its confidence are too coarse for a crosshair dot,
+/// which would otherwise be smeared along the scene's motion. Fixed pixels stay sharp and are left out of other
+/// pixels' blur.
+///
+/// A neighbouring frame says "fixed" when the pixel keeps its colour there *and* following the scene's motion
+/// would land on a clearly different colour (in flat areas both fit, and there blurring changes nothing anyway).
+/// Neighbours with hardly any motion (or across a cut) say nothing; every one that does must agree. Only pixels
+/// that stand out from what is right around them count: a crosshair or HUD mark does, a plain wall doesn't (and
+/// its flow, with nothing to lock on to, can point anywhere).
+///
+/// A crosshair stays put for a long time, so the evidence is carried to later frames for as long as the pixel
+/// keeps its colour: a calm moment (no motion, no evidence) or compression noise during a flick can't wipe it
+/// out, so it is already there when the next flick comes. When the crosshair goes away (scoping, death) the pixel
+/// changes and is released at once; tests that see motion and don't confirm it fade it.
+fn fixed_mask(win: &Window, n: usize, hist: &mut FixedHistory) {
+    if hist.n == Some(n) {
+        return;
+    }
+    let nbrs: Vec<(&Frame, &Motion)> =
+        [win.bwd(n).map(|m| (win.frame(n - 1), m)), win.fwd(n).map(|m| (win.frame(n + 1), m))].into_iter().flatten().collect();
+    let fr = win.frame(n);
+    let (w, h) = (fr.w, fr.h);
+    if nbrs.is_empty() {
+        *hist = FixedHistory { n: Some(n), hist: vec![], mask: None };
+        return;
+    }
+    // evidence from earlier frames to carry on
+    let have = matches!(hist.n, Some(m) if m < n) && hist.hist.len() == w * h;
+    let prev = std::mem::take(&mut hist.hist);
+    // per pixel: [this frame's evidence (carried on to the next), its 3-wide horizontal maximum]
+    let mut now = vec![[0u8; 2]; w * h];
+    let ramp = |v: f32, lo: f32, hi: f32| ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+    let still = |a: &[u8], b: &[u8]| a[0].abs_diff(b[0]).max(a[1].abs_diff(b[1])).max(a[2].abs_diff(b[2]));
+    flow::par_rows(&mut now, w, |y, row| {
+        let o = y * w * 3;
+        let cur = &fr.bgr[o..o + w * 3];
+        // the cheap test first, for the whole row: most moving pixels change, and are done here
+        let mut worst = vec![0u8; w];
+        for (f, _) in &nbrs {
+            let nb = &f.bgr[o..o + w * 3];
+            for ((wv, c), d) in worst.iter_mut().zip(cur.as_chunks::<3>().0).zip(nb.as_chunks::<3>().0) {
+                *wv = (*wv).max(still(c, d));
+            }
+        }
+        let prev_row = if have { Some(&prev[y * w..(y + 1) * w]) } else { None };
+        // each neighbour's motion along this row (see `Motion::row`)
+        let rows: Vec<(Vec<f32>, Vec<f32>)> = nbrs
+            .iter()
+            .map(|(_, mo)| {
+                let (mut u, mut v) = (Vec::new(), Vec::new());
+                mo.row(y, &mut u, &mut v);
+                (u, v)
+            })
+            .collect();
+        for (x, m) in row.iter_mut().enumerate() {
+            let worst_still = worst[x] as f32;
+            if worst_still >= KEEP_HI {
+                continue; // changes: neither fixed now nor carried
+            }
+            let carried = match prev_row {
+                Some(p) if p[x][0] > 0 => p[x][0] as f32 / 255.0 * ramp(KEEP_HI - worst_still, 0.0, KEEP_HI - KEEP_LO),
+                _ => 0.0,
+            };
+            let mut value = carried;
+            let px = &cur[x * 3..x * 3 + 3];
+            let contrast = || {
+                let r = FIXED_RING;
+                let at = |xx: usize, yy: usize| &fr.bgr[(yy * w + xx) * 3..(yy * w + xx) * 3 + 3];
+                [(x.saturating_sub(r), y), ((x + r).min(w - 1), y), (x, y.saturating_sub(r)), (x, (y + r).min(h - 1))]
+                    .iter()
+                    .map(|(xx, yy)| still(px, at(*xx, *yy)))
+                    .max()
+                    .unwrap_or(0) as f32
+            };
+            if worst_still < FIXED_HI && contrast() >= FIXED_CONTRAST {
+                let mut score = 1f32;
+                let mut seen = false;
+                for ((f, mo), (ru, rv)) in nbrs.iter().zip(&rows) {
+                    let (u, v) = mo.raw_row(x, ru, rv);
+                    if u * u + v * v < FIXED_MOTION * FIXED_MOTION {
+                        continue; // the scene hardly moves this way (and its blur is short): no evidence
+                    }
+                    seen = true;
+                    let st = still(px, &f.bgr[o + x * 3..o + x * 3 + 3]) as f32;
+                    let (mx, my) = ((x as f32 + u).round() as isize, (y as f32 + v).round() as isize);
+                    let moved = if mx < 0 || my < 0 || mx >= w as isize || my >= h as isize {
+                        0.0 // left the frame: no evidence either way
+                    } else {
+                        let j = (my as usize * w + mx as usize) * 3;
+                        still(px, &f.bgr[j..j + 3]) as f32
+                    };
+                    score = score.min(ramp(FIXED_HI - st, 0.0, FIXED_HI - FIXED_LO) * ramp(moved - st, GAIN_LO, GAIN_HI));
+                    if score <= 0.0 {
+                        break;
+                    }
+                }
+                if seen {
+                    value = score.max(carried * FIXED_FADE);
+                }
+            } else if carried > 0.0 && worst_still >= FIXED_HI {
+                // changed a fair bit: no longer looks fixed
+                value = carried * FIXED_FADE;
+            }
+            m[0] = (value * 255.0).round() as u8;
+        }
+        // grow it by a pixel (horizontally here, vertically below): the anti-aliased rim and outline of a
+        // crosshair are partly see-through, so they change with the scene behind them, but belong to the fixed
+        // shape next to them
+        for x in 0..w {
+            let v = row[x.saturating_sub(1)][0].max(row[x][0]).max(row[(x + 1).min(w - 1)][0]);
+            row[x][1] = v;
+        }
+    });
+    let mask = FixedMask::from_rows(&now, w, h);
+    *hist = FixedHistory { n: Some(n), hist: now, mask: Some(mask) };
+}
+
+/// Blend the blurred linear colour `acc / wsum` back towards the pixel's own colour `c0` by its fixedness.
+#[inline]
+fn keep_fixed(acc: [f32; 3], wsum: f32, c0: [f32; 3], fixed: f32) -> [f32; 3] {
+    let b = [acc[0] / wsum, acc[1] / wsum, acc[2] / wsum];
+    [b[0] + (c0[0] - b[0]) * fixed, b[1] + (c0[1] - b[1]) * fixed, b[2] + (c0[2] - b[2]) * fixed]
+}
+
 /// Render the output frame centred on source time `p` (frames) into `out` (BGR8).
-fn blur_frame(win: &Window, cfg: &BlurCfg, p: f64, out: &mut [u8]) {
+fn blur_frame(win: &Window, cfg: &BlurCfg, p: f64, fixed_hist: &mut FixedHistory, out: &mut [u8]) {
     let (w, _h) = (win.frames[0].w, win.frames[0].h);
     let centre_n = (p.round() as usize).clamp(win.base, win.last());
     let on_frame = (p - centre_n as f64).abs() < 1e-6;
     if !cfg.bidir && cfg.half <= 0.5 && on_frame {
-        return blur_on_frame(win, cfg, centre_n, out);
+        return blur_on_frame(win, cfg, centre_n, fixed_hist, out);
     }
     let lo = ((p - cfg.half).floor().max(0.0) as usize).clamp(win.base, win.last());
     let hi = (((p + cfg.half).ceil() as usize) + 1).clamp(lo, win.last());
     let span = (hi - lo + 1).min(MAX_SPAN);
     let centre_frame = win.frame(centre_n);
+    fixed_mask(win, centre_n, fixed_hist);
+    let mask = fixed_hist.mask.as_ref();
     let l2s: &[u8] = &L2S;
     flow::par_rows(out, w * 3, |y, row| {
         for x in 0..w {
+            let fixed = mask.map_or(0.0, |m| m.at(x, y));
+            if on_frame && fixed >= 0.999 {
+                let i = (y * w + x) * 3;
+                row[x * 3..x * 3 + 3].copy_from_slice(&centre_frame.bgr[i..i + 3]);
+                continue;
+            }
             let pm = PixelMotion::new(win, lo, span, x as f32, y as f32);
             let len = |m: Option<(f32, f32)>| m.map(|(u, v)| (u * u + v * v).sqrt());
             let l = match (len(pm.fwd(centre_n)), len(pm.bwd(centre_n))) {
@@ -481,9 +715,10 @@ fn blur_frame(win: &Window, cfg: &BlurCfg, p: f64, out: &mut [u8]) {
                 }
                 wsum += wt;
             }
+            let lin = keep_fixed(acc, wsum, c0, fixed);
             let o = &mut row[x * 3..x * 3 + 3];
             for c in 0..3 {
-                o[c] = srgb_with(l2s, acc[c] / wsum);
+                o[c] = srgb_with(l2s, lin[c]);
             }
         }
     });
@@ -492,12 +727,14 @@ fn blur_frame(win: &Window, cfg: &BlurCfg, p: f64, out: &mut [u8]) {
 /// The common case (output frame = source frame, shutter within the neighbouring frames, nearest-frame
 /// sampling): every sample comes from frame `n`, so each pixel's two motions are looked up once, and pixels
 /// that don't move are copied as decoded.
-fn blur_on_frame(win: &Window, cfg: &BlurCfg, n: usize, out: &mut [u8]) {
+fn blur_on_frame(win: &Window, cfg: &BlurCfg, n: usize, fixed_hist: &mut FixedHistory, out: &mut [u8]) {
     let fr = win.frame(n);
     let w = fr.w;
     let (fm, bm) = (win.fwd(n), win.bwd(n));
     let half = cfg.half as f32;
     let max_taps = cfg.max_taps.max(1);
+    fixed_mask(win, n, fixed_hist);
+    let mref = fixed_hist.mask.as_ref();
     let l2s: &[u8] = &L2S;
     flow::par_rows(out, w * 3, |y, row| {
         let yf = y as f32;
@@ -516,7 +753,8 @@ fn blur_on_frame(win: &Window, cfg: &BlurCfg, n: usize, out: &mut [u8]) {
                 _ => (0.0, 0.0),
             };
             let len = (mf.0 * mf.0 + mf.1 * mf.1).max(mb.0 * mb.0 + mb.1 * mb.1).sqrt() * 2.0 * half;
-            if len < 0.5 {
+            let fixed = mref.map_or(0.0, |m| m.at(x, y));
+            if len < 0.5 || fixed >= 0.999 {
                 row[x * 3..x * 3 + 3].copy_from_slice(&src[x * 3..x * 3 + 3]);
                 continue;
             }
@@ -532,7 +770,7 @@ fn blur_on_frame(win: &Window, cfg: &BlurCfg, n: usize, out: &mut [u8]) {
                 let (col, cw) = match m {
                     Some(m) if d.abs() >= 1e-3 => {
                         let (px, py) = (xf - d.abs() * v.0, yf - d.abs() * v.1);
-                        (fr.rgb(px, py), m.conf_at(px, py))
+                        (fr.rgb(px, py), m.conf_at(px, py) * mref.map_or(1.0, |f| f.unfixed(px, py)))
                     }
                     _ => (c0, 1.0),
                 };
@@ -542,9 +780,10 @@ fn blur_on_frame(win: &Window, cfg: &BlurCfg, n: usize, out: &mut [u8]) {
                 acc[2] += col[2] * wt;
                 wsum += wt;
             }
+            let lin = keep_fixed(acc, wsum, c0, fixed);
             let o = &mut row[x * 3..x * 3 + 3];
             for c in 0..3 {
-                o[c] = srgb_with(l2s, acc[c] / wsum);
+                o[c] = srgb_with(l2s, lin[c]);
             }
         }
     });
@@ -671,6 +910,7 @@ pub fn blur_part(
                 }
                 Ok(())
             };
+            let mut fixed_hist = FixedHistory::default();
             for j in 0..n_out {
                 if cancel.is_set() {
                     bail!(vl_core::jobs::Cancelled);
@@ -692,7 +932,7 @@ pub fn blur_part(
                     win.base += 1;
                 }
                 let mut buf = vec![0u8; w * h * 3];
-                blur_frame(&win, &cfg, p.min(win.last() as f64), &mut buf);
+                blur_frame(&win, &cfg, p.min(win.last() as f64), &mut fixed_hist, &mut buf);
                 otx.send(buf).map_err(|_| anyhow!("smoothing encode failed"))?;
                 progress(((j + 1) as f64 / n_out as f64).min(0.99));
             }
@@ -752,7 +992,7 @@ mod tests {
         let win = window(vec![frame_with_bar(100, w, h), frame_with_bar(120, w, h), frame_with_bar(140, w, h)]);
         let cfg = BlurCfg { half: 0.25, max_taps: 16, bidir: false };
         let mut out = vec![0u8; w * h * 3];
-        blur_frame(&win, &cfg, 1.0, &mut out);
+        blur_frame(&win, &cfg, 1.0, &mut FixedHistory::default(), &mut out);
         let row = h / 2;
         let at = |x: usize| out[(row * w + x) * 3] as i32;
         let src = |x: usize| win.frames[1].bgr[(row * w + x) * 3] as i32;
@@ -763,6 +1003,58 @@ mod tests {
         assert!(at(121) < 250, "bar edge softened {}", at(121));
     }
 
+    /// A textured scene with a bright bar in it, panned `shift` px to the right, with (optionally) a small white
+    /// cross fixed at the centre.
+    fn frame_with_crosshair(shift: usize, w: usize, h: usize, cross: bool) -> Frame {
+        let tex = crate::flow::tests::noise(w + 200, h, 5);
+        let mut bgr = vec![0u8; w * h * 3];
+        let (cx, cy) = (w / 2, h / 2);
+        for y in 0..h {
+            for x in 0..w {
+                let mut v = (tex.at(x + 150 - shift, y) * 0.6) as u8;
+                if x >= 60 + shift && x < 66 + shift {
+                    v = 230;
+                }
+                let on_cross = (y == cy && x.abs_diff(cx) <= 3) || (x == cx && y.abs_diff(cy) <= 3);
+                if cross && on_cross {
+                    v = 255;
+                }
+                bgr[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&[v, v, v]);
+            }
+        }
+        Frame::new(vl_core::image::BgrImage::from_raw(w, h, bgr), false)
+    }
+
+    #[test]
+    fn crosshair_stays_sharp_while_the_scene_is_blurred() {
+        let (w, h) = (256, 144);
+        let (cx, cy) = (w / 2, h / 2);
+        let cfg = BlurCfg { half: 0.25, max_taps: 16, bidir: false };
+        let render = |cross: bool| {
+            let win = window((0..3).map(|i| frame_with_crosshair(i * 20, w, h, cross)).collect());
+            let mut out = vec![0u8; w * h * 3];
+            blur_frame(&win, &cfg, 1.0, &mut FixedHistory::default(), &mut out);
+            (out, win)
+        };
+        let (out, win) = render(true);
+        let (plain, _) = render(false);
+        let at = |o: &[u8], x: usize, y: usize| o[(y * w + x) * 3] as i32;
+        // the cross is as it was
+        for d in 0..=3 {
+            assert!(at(&out, cx + d, cy) > 240 && at(&out, cx - d, cy) > 240, "arm at {d}: {}", at(&out, cx + d, cy));
+            assert!(at(&out, cx, cy + d) > 240 && at(&out, cx, cy - d) > 240);
+        }
+        // it isn't smeared into the scene beside it (along the motion), which is blurred as without it
+        for x in (cx - 10..cx - 4).chain(cx + 5..cx + 11) {
+            assert!((at(&out, x, cy) - at(&plain, x, cy)).abs() <= 12, "x {x}: {} vs {}", at(&out, x, cy), at(&plain, x, cy));
+        }
+        // and the scene is blurred: the bar (80..86 in the middle frame) is smeared over about +-5 px
+        let src = &win.frames[1];
+        let s = |x: usize| src.bgr[(cy * w + x) * 3] as i32;
+        assert!(at(&out, 78, cy) > s(78) + 10, "smear before the bar {} vs {}", at(&out, 78, cy), s(78));
+        assert!(at(&out, 87, cy) > s(87) + 10, "smear after the bar {} vs {}", at(&out, 87, cy), s(87));
+    }
+
     #[test]
     fn still_frames_stay_identical() {
         let (w, h) = (128, 72);
@@ -770,7 +1062,7 @@ mod tests {
         let win = window(vec![f(), f(), f()]);
         let cfg = BlurCfg { half: 0.25, max_taps: 16, bidir: true };
         let mut out = vec![0u8; w * h * 3];
-        blur_frame(&win, &cfg, 1.0, &mut out);
+        blur_frame(&win, &cfg, 1.0, &mut FixedHistory::default(), &mut out);
         let src = &win.frames[1];
         for i in 0..w * h * 3 {
             assert!((out[i] as i32 - src.bgr[i] as i32).abs() <= 1);
