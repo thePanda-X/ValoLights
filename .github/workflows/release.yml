@@ -103,6 +103,11 @@ jobs:
           "$cuda\bin\x64" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           & "$cuda\bin\nvcc.exe" --version
 
+      # every build tool on the same MSVC toolset (see the script; whisper.cpp's CMake build broke without it)
+      - name: MSVC developer environment
+        shell: powershell
+        run: ./tools/msvc_env.ps1
+
       - name: Install Inno Setup
         if: env.PUBLISH == 'true'
         run: choco install innosetup -y --no-progress

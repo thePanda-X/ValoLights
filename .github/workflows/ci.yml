@@ -75,6 +75,10 @@ jobs:
           key: binaries-${{ hashFiles('tools/fetch_binaries.ps1', 'tools/rife/**') }}
       - name: Unit tests
         run: cargo test --release --workspace --exclude vl-speech
+      # every build tool on the same MSVC toolset (see the script; whisper.cpp's CMake build broke without it)
+      - name: MSVC developer environment
+        shell: powershell
+        run: ./tools/msvc_env.ps1
       # the speech helper without CUDA (the release build has CUDA; CI runners have no GPU)
       - name: Speech helper (CPU build)
         run: cargo test --release -p vl-speech --no-default-features
