@@ -6,6 +6,9 @@
 # replaced MSVC 14.51 with 14.52 (win25-vs2026 20261116) the cached ASM compiler pointed at a cl.exe that was
 # gone ("CMAKE_ASM_COMPILER ... is not a full path to an existing compiler tool"). Dropping the stale
 # CMakeCache.txt makes CMake configure afresh; the rest of the cache is still used.
+#
+# release.yml has the same steps written out (a release run may check out an older tag without this file):
+# keep the two in step.
 $ErrorActionPreference = "Stop"
 $root = Join-Path (Split-Path -Parent $PSScriptRoot) "target"
 if (-not (Test-Path $root)) { Write-Host "no target folder"; exit 0 }

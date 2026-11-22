@@ -103,10 +103,34 @@ jobs:
           "$cuda\bin\x64" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           & "$cuda\bin\nvcc.exe" --version
 
-      # CMake caches from the build cache that point at compilers the runner image no longer has (see the script)
+      # CMake caches from the build cache that point at compilers the runner image no longer has: whisper.cpp's
+      # CMakeCache.txt kept MSVC 14.51 paths after the image moved to 14.52, and CMake doesn't look again. Same as
+      # tools/ci_stale_cmake.ps1 (used by CI), written out here because runs given an older tag check out code
+      # that doesn't have the script; keep the two in step.
       - name: Drop stale CMake caches
         shell: powershell
-        run: ./tools/ci_stale_cmake.ps1
+        run: |
+          $caches = Get-ChildItem target -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName "build" } |
+            Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Recurse -Depth 4 -Filter CMakeCache.txt -File -ErrorAction SilentlyContinue }
+          $dropped = 0
+          foreach ($c in $caches) {
+            $missing = @()
+            foreach ($line in Get-Content $c.FullName) {
+              if ($line -match '^(CMAKE_\w*(COMPILER|LINKER|_AR|_MT|_RC_COMPILER))(:\w+)?=(.+)$') {
+                $name, $path = $matches[1], $matches[4].Trim()
+                if ($path -match '^[A-Za-z]:[\\/]' -and -not (Test-Path -LiteralPath $path)) { $missing += "$name = $path" }
+              }
+            }
+            if ($missing) {
+              Write-Host "stale CMake cache $($c.FullName):"
+              $missing | ForEach-Object { Write-Host "  missing $_" }
+              Remove-Item -LiteralPath $c.FullName -Force
+              $files = Join-Path $c.DirectoryName "CMakeFiles"
+              if (Test-Path $files) { Remove-Item -LiteralPath $files -Recurse -Force }
+              $dropped++
+            }
+          }
+          Write-Host "$(@($caches).Count) CMake caches checked, $dropped dropped"
 
       - name: Install Inno Setup
         if: env.PUBLISH == 'true'
